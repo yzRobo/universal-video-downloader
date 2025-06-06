@@ -134,3 +134,19 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+package-lock.json
+
+# Media files
+*.mp4
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.m4a
+*.mov
+*.avi
+*.wmv
+*.mkv
+*.webm
+*.flv

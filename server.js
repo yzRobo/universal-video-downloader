@@ -7,6 +7,8 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { fileURLToPath } from 'url';
+// MODIFIED: Import the ffmpeg-static package
+import ffmpeg from 'ffmpeg-static';
 
 // --- Server Setup ---
 const __filename = fileURLToPath(import.meta.url);
@@ -21,14 +23,27 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// --- Module-level variables to handle cancellation ---
+let isCancelled = false;
+let activeFfmpegProcess = null;
+
 // --- WebSocket Connection Handling ---
 io.on("connection", (socket) => {
   console.log("A user connected:", socket.id);
 
   socket.on("start-download", async (data) => {
     console.log("Received download request with batches:", data.batches.length);
-    // Call the master function to process all batches sequentially
+    isCancelled = false;
     await processAllBatches(data.batches, socket);
+  });
+
+  socket.on("cancel-download", () => {
+    console.log("Cancellation request received from:", socket.id);
+    isCancelled = true;
+    if (activeFfmpegProcess) {
+        socket.emit("log", { type: 'error', message: '--- CANCELLATION INITIATED BY USER ---' });
+        activeFfmpegProcess.kill('SIGKILL');
+    }
   });
 
   socket.on("disconnect", () => {
@@ -44,42 +59,34 @@ httpServer.listen(PORT, () => {
 // =========================================================================
 //                  MAIN BATCH PROCESSING LOGIC
 // =========================================================================
-
-/**
- * Main orchestrator function that processes an array of download batches sequentially.
- * @param {Array} batches - An array of batch configurations from the client.
- * @param {Socket} socket - The client's socket instance for emitting updates.
- */
 async function processAllBatches(batches, socket) {
   socket.emit("all-batches-start");
   
   for (const [index, batch] of batches.entries()) {
-    socket.emit("log", { type: 'info', message: `\n--- Starting Batch ${index + 1} / ${batches.length} (Prefix: ${batch.prefixMajor}.x) ---` });
-    // Let the client know a new batch is starting so it can set up the UI
+    if (isCancelled) {
+        socket.emit("log", { type: 'error', message: `Skipping remaining batches due to cancellation.` });
+        break;
+    }
+    socket.emit("log", { type: 'info', message: `\n--- Starting Batch ${index + 1} / ${batches.length} (Prefix: ${batch.prefixMajor}.x, Format: ${batch.format}) ---` });
     socket.emit("new-batch-starting", { 
         batchIndex: index, 
         totalVideos: batch.videos.length 
     });
     
-    // Process this single batch and wait for it to complete
     await runSingleBatch(batch, socket);
-    
-    socket.emit("log", { type: 'success', message: `--- Finished Batch ${index + 1} / ${batches.length} ---\n` });
   }
-
-  socket.emit("log", { type: "success", message: "\n✅ All download batches are complete!" });
-  socket.emit("all-batches-complete");
+  
+  if (isCancelled) {
+    socket.emit("log", { type: "error", message: "\nDownload process cancelled." });
+  } else {
+    socket.emit("log", { type: "success", message: "\nDownload process finished." });
+  }
+  socket.emit("all-batches-complete", { cancelled: isCancelled });
 }
 
-/**
- * Processes a single batch of videos.
- * @param {object} batchConfig - The configuration for this specific batch.
- * @param {Socket} socket - The client's socket instance.
- */
 async function runSingleBatch(batchConfig, socket) {
-  const { videos, prefixMajor, prefixMinorStart } = batchConfig;
+  const { videos, prefixMajor, prefixMinorStart, format } = batchConfig;
   
-  // --- URL Normalization ---
   socket.emit("log", { type: "info", message: "Normalizing Vimeo URLs for this batch..." });
   const processedVideos = videos.map(video => {
     let newUrl = video.url;
@@ -102,11 +109,13 @@ async function runSingleBatch(batchConfig, socket) {
   
   let prefixMinorCounter = parseInt(prefixMinorStart, 10);
   for (let i = 0; i < processedVideos.length; i++) {
+    if (isCancelled) {
+        socket.emit("log", { type: 'error', message: `Skipping remaining videos in batch due to cancellation.` });
+        break;
+    }
     const video = processedVideos[i];
-    
     const filePrefix = `${prefixMajor}.${prefixMinorCounter}_`;
-    await downloadVimeoPrivateVideo(video, i, processedVideos.length, filePrefix, socket);
-    
+    await downloadVimeoPrivateVideo(video, i, processedVideos.length, filePrefix, format, socket);
     prefixMinorCounter++;
   }
 }
@@ -114,16 +123,16 @@ async function runSingleBatch(batchConfig, socket) {
 // =========================================================================
 //                  CORE VIMEO DOWNLOADER FUNCTIONS
 // =========================================================================
-
-async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix, socket) {
+async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix, format, socket) {
   const logPrefix = `[${index + 1}/${total}]`;
   socket.emit("log", { type: "info", message: `${logPrefix} Fetching details for ${videoInfo.url}` });
 
   try {
     let playerConfig;
-    for (let i = 0; i < 3; i++) { // Retry loop
+    for (let i = 0; i < 3; i++) {
         playerConfig = await extractVimeoPlayerConfig(videoInfo.url, videoInfo.domain, logPrefix, socket);
         if (playerConfig) break;
+        if(isCancelled) return;
         socket.emit("log", { type: "info", message: `${logPrefix} Retrying in 5 seconds...` });
         await new Promise((resolve) => setTimeout(resolve, 5000));
     }
@@ -139,13 +148,12 @@ async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix
     const outputDir = path.join(__dirname, 'downloads');
     const finalOutput = path.join(outputDir, defaultFilename);
     
-    socket.emit("log", { type: "info", message: `${logPrefix} Saving video as: ${path.basename(finalOutput)}` });
-
     await new Promise((resolve) => {
-      downloadHLSStream(stream, finalOutput, playerConfig.duration, resolve, logPrefix, socket, index);
+      downloadHLSStream(stream, finalOutput, playerConfig.duration, format, resolve, logPrefix, socket, index);
     });
 
   } catch (error) {
+    if (isCancelled) return;
     const errorMsg = `${logPrefix} Failed to download video: ${error.message}`;
     socket.emit("log", { type: "error", message: errorMsg });
     socket.emit("progress", { index, status: `❌ Error: ${error.message}` });
@@ -170,90 +178,119 @@ async function extractVimeoPlayerConfig(url, domain, pre, socket) {
       streamUrl: playerConfig.request.files.hls.cdns.akfire_interconnect_quic.avc_url || playerConfig.request.files.hls.cdns.fastly_skyfire.avc_url,
     };
   } catch (error) {
+    if (isCancelled) return null;
     const errorMsg = `${pre} Error extracting Vimeo player config: ${error.message}`;
     socket.emit("log", { type: "error", message: errorMsg });
-
     if (error?.response?.headers?.["set-cookie"]) {
       axios.defaults.headers.common["Cookie"] = error.response.headers["set-cookie"].join("; ");
       socket.emit("log", { type: "info", message: `${pre} Video Security Error... Trying again with new cookies...`});
     }
-    return null; // Return null to indicate failure
+    return null;
   }
 }
 
-async function downloadHLSStream(m3u8Url, outputFilename, duration = 600, resolve, pre, socket, videoIndex) {
+async function downloadHLSStream(m3u8Url, outputFilename, duration, format, resolve, pre, socket, videoIndex) {
   const outputDir = path.dirname(outputFilename);
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  // Initial progress event
+  let finalOutput = outputFilename;
+  const ffmpegArgs = ["-i", m3u8Url];
+
+  switch (format) {
+    case 'audio-mp3':
+      finalOutput = outputFilename.replace(/\.mp4$/, '.mp3');
+      ffmpegArgs.push('-vn', '-b:a', '192k');
+      break;
+    case 'audio-m4a':
+      finalOutput = outputFilename.replace(/\.mp4$/, '.m4a');
+      ffmpegArgs.push('-vn', '-c:a', 'copy');
+      break;
+    case 'video-only':
+      finalOutput = outputFilename.replace(/\.mp4$/, '_No_Audio.mp4');
+      ffmpegArgs.push('-an', '-c:v', 'copy');
+      break;
+    default:
+      ffmpegArgs.push('-c', 'copy', '-bsf:a', 'aac_adtstoasc');
+      break;
+  }
+  ffmpegArgs.push(finalOutput);
+
   socket.emit("progress", {
     index: videoIndex,
     percentage: 0,
     status: "⇣ Downloading",
     size: "0 MB",
     duration: "00:00:00",
-    filename: path.basename(outputFilename),
-    speed: "..." 
+    filename: path.basename(finalOutput),
+    speed: "..."
   });
 
   try {
-    if (fs.existsSync(outputFilename)) fs.rmSync(outputFilename);
+    if (fs.existsSync(finalOutput)) fs.rmSync(finalOutput);
   } catch (e) {
     console.warn("Could not remove existing file:", e.message);
   }
 
-  const ffmpegArgs = ["-i", m3u8Url, "-c", "copy", "-bsf:a", "aac_adtstoasc", outputFilename];
-  const ffmpeg = spawn("ffmpeg", ffmpegArgs);
+  // Use the path from the ffmpeg-static package instead of the global command
+  console.log('--- Using FFmpeg from path:', ffmpeg);
+  activeFfmpegProcess = spawn(ffmpeg, ffmpegArgs);
 
-  ffmpeg.on("close", (code) => {
+  activeFfmpegProcess.on("close", (code) => {
+    activeFfmpegProcess = null;
+    
+    if (isCancelled) {
+        console.log(`FFmpeg process for video ${videoIndex} was killed by user.`);
+        socket.emit("progress", { index: videoIndex, status: `🛑 Cancelled` });
+        try {
+          if (fs.existsSync(finalOutput)) fs.rmSync(finalOutput);
+        } catch(e) { console.error("Could not remove cancelled file:", e.message)}
+        resolve(false);
+        return;
+    }
+
     if (code === 0) {
       socket.emit("progress", { index: videoIndex, percentage: 100, status: "✅ Downloaded" });
       resolve(true);
     } else {
-      const errorMsg = `${pre} FFmpeg process exited with code ${code}`;
-      socket.emit("log", { type: "error", message: errorMsg });
+      socket.emit("log", { type: "error", message: `${pre} FFmpeg process exited with code ${code}` });
       socket.emit("progress", { index: videoIndex, status: `❌ Error (code ${code})`});
       resolve(false);
     }
   });
 
-  ffmpeg.stderr.on("data", (data) => {
+  activeFfmpegProcess.stderr.on("data", (data) => {
     const dataStr = data.toString();
     if (dataStr.includes("time=")) {
       const timeMatch = dataStr.match(/time=(\s*\d{2}:\d{2}:\d{2}\.\d{2})/);
       const sizeMatch = dataStr.match(/size=(\s*\d+kB)/);
       const speedMatch = dataStr.match(/bitrate=\s*([\d\.]+)\s*kbits\/s/);
-
       if (timeMatch) {
         const currentTime = timeMatch[1].trim();
         const p = calculatePercentage(currentTime, duration);
         const currentSize = sizeMatch ? sizeMatch[1].trim().replace("kB", " KB") : "N/A";
-        
-        let speedString = "..."; // Default placeholder
-        // --- MODIFIED: Convert kbits/s to Mbps ---
+        let speedString = "...";
         if (speedMatch && speedMatch[1]) {
             const speedInKbits = parseFloat(speedMatch[1]);
             if (!isNaN(speedInKbits)) {
-                // 1 Megabit = 1000 kilobits
                 const speedInMbps = (speedInKbits / 1000);
                 speedString = speedInMbps.toFixed(2) + " Mbps";
             }
         }
-
         socket.emit("progress", {
           index: videoIndex,
           percentage: Math.min(p, 100),
           duration: currentTime,
           size: currentSize,
-          speed: speedString // Send the newly formatted string
+          speed: speedString
         });
       }
     }
   });
 
-  ffmpeg.on("error", (err) => {
+  activeFfmpegProcess.on("error", (err) => {
+    activeFfmpegProcess = null;
     const errorMsg = `${pre} Failed to start FFmpeg process: ${err.message}`;
     socket.emit("log", { type: "error", message: errorMsg });
     socket.emit("progress", { index: videoIndex, status: `❌ Error`});

@@ -1,18 +1,14 @@
 @echo off
 title Vimeo Downloader Server
 
-echo Checking for dependencies...
-
-REM Check if node_modules directory exists. If not, run npm install.
-IF NOT EXIST "node_modules" (
-    echo Dependencies not found. Running npm install...
-    call npm install
-    IF %ERRORLEVEL% NEQ 0 (
-        echo.
-        echo npm install failed. Please check for errors above.
-        pause
-        exit /b
-    )
+echo.
+echo Installing/Verifying dependencies...
+call npm install
+IF %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo npm install failed. Please check for errors above.
+    pause
+    exit /b
 )
 
 echo.
