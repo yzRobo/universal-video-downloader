@@ -1,3 +1,4 @@
+// public/client.js
 document.addEventListener("DOMContentLoaded", () => {
     const socket = io();
     let sectionCounter = 1;
