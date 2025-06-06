@@ -15,7 +15,8 @@
             <!-- Container for dynamic sections -->
             <div id="sections-container">
                 <!-- Template Section (will be cloned) -->
-                <div class="download-section">
+                <!-- MODIFIED: Added 'is-public' class to hide domain fields by default -->
+                <div class="download-section is-public">
                     <button type="button" class="remove-section-btn" style="display: none;">Remove Section</button>
                     <h3 class="section-title">Section 1</h3>
 
@@ -23,9 +24,11 @@
                     <div class="form-group form-group-toggle">
                         <label>Download Type</label>
                         <div class="toggle-switch">
-                            <input type="radio" id="s1-private" name="download-type-s1" class="download-type" value="private" checked>
+                            <!-- MODIFIED: Removed 'checked' from private -->
+                            <input type="radio" id="s1-private" name="download-type-s1" class="download-type" value="private">
                             <label for="s1-private">Private</label>
-                            <input type="radio" id="s1-public" name="download-type-s1" class="download-type" value="public">
+                            <!-- MODIFIED: Added 'checked' to public -->
+                            <input type="radio" id="s1-public" name="download-type-s1" class="download-type" value="public" checked>
                             <label for="s1-public">Public</label>
                             <span class="toggle-knob"></span>
                         </div>
@@ -55,7 +58,6 @@
                         <select class="download-format">
                             <option value="video-audio" selected>Video + Audio</option>
                             <option value="video-only">Video Only</option>
-                            <!-- MODIFIED: Split audio into two options -->
                             <option value="audio-mp3">Audio Only (.mp3)</option>
                             <option value="audio-m4a">Audio Only (.m4a)</option>
                         </select>
