@@ -64,7 +64,7 @@ label {
     font-weight: bold;
 }
 
-input {
+input, select {
     background-color: var(--bg-color);
     color: var(--text-color);
     border: 1px solid var(--border-color);
@@ -72,6 +72,15 @@ input {
     padding: 0.75rem;
     font-size: 1rem;
     font-family: inherit;
+}
+
+select {
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e0e0e0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1.2em;
+    padding-right: 2.5rem;
 }
 
 button {
@@ -99,10 +108,44 @@ button:disabled {
     width: 100%;
 }
 
+.btn-danger {
+    background-color: var(--error-color);
+}
+.btn-danger:hover:not(:disabled) {
+    background-color: #c82333;
+}
+#cancel-btn {
+    width: 100%;
+    margin-bottom: 1.5rem;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.8rem;
+}
+.btn-secondary:hover:not(:disabled) {
+    background-color: #5a6268;
+}
+
 #results-container {
     margin-top: 2rem;
     border-top: 1px solid var(--border-color);
     padding-top: 1rem;
+}
+
+.logs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 2rem;
+}
+.logs-header h2 {
+    border-bottom: none;
+    margin: 0;
+}
+.logs-hidden #log-output {
+    display: none;
 }
 
 #log-output {
@@ -113,6 +156,7 @@ button:disabled {
     overflow-y: auto;
     white-space: pre-wrap;
     font-size: 0.9rem;
+    margin-top: 1rem;
 }
 
 .log-error { color: var(--error-color); }
@@ -137,17 +181,16 @@ button:disabled {
 .progress-bar-inner.complete { background-color: var(--success-color); }
 .progress-bar-inner.error { background-color: var(--error-color); }
 
-/* --- ADDED: New styles for speed and stats container --- */
 .progress-bar-stats {
     display: flex;
     align-items: center;
     gap: 1rem;
-    flex-shrink: 0; /* Prevent this container from shrinking */
+    flex-shrink: 0;
 }
 .progress-bar-speed {
     font-weight: bold;
     color: var(--info-color);
-    min-width: 90px; /* Prevents layout jump as text changes */
+    min-width: 90px;
     text-align: right;
 }
 
@@ -155,7 +198,6 @@ button:disabled {
 .download-section { background-color: rgba(0,0,0,0.2); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; position: relative; transition: all 0.3s ease; }
 .download-section.active { border-color: var(--primary-color); box-shadow: 0 0 10px rgba(0, 123, 255, 0.5); }
 .section-title { margin-top: 0; color: #ccc; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 1rem; }
-
 #add-section-btn { width: auto; background-color: var(--info-color); padding: 0.6rem 1.2rem; font-size: 1rem; margin-bottom: 1rem; }
 #add-section-btn:hover:not(:disabled) { background-color: #138496; }
 .remove-section-btn { position: absolute; top: 1rem; right: 1rem; background-color: transparent; border: 1px solid var(--error-color); color: var(--error-color); padding: 0.2rem 0.6rem; font-size: 0.8rem; border-radius: 4px; cursor: pointer; }
@@ -173,24 +215,16 @@ hr { border: none; border-top: 1px solid var(--border-color); margin: 1.5rem 0; 
 .remove-video-btn { background-color: #555; color: #ddd; border: none; border-radius: 50%; width: 28px; height: 28px; font-size: 1.5rem; line-height: 28px; padding: 0; text-align: center; cursor: pointer; flex-shrink: 0; }
 .remove-video-btn:hover:not(:disabled) { background-color: var(--error-color); color: white; }
 
-/* --- NEW STYLES FOR TOGGLE --- */
-
-/* Toggle Group Layout */
+/* --- STYLES FOR TOGGLE --- */
 .form-group-toggle { flex-direction: row; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
-
-/* Hide domain fields when the section is public */
 .download-section.is-public .domain-fields-wrapper { display: none; }
 .download-section.is-public .video-row { grid-template-columns: 1fr auto; }
-
-/* Toggle Switch Styles */
 .toggle-switch { position: relative; display: inline-block; width: 140px; height: 34px; background-color: #333; border-radius: 34px; border: 1px solid var(--border-color); }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
 .toggle-switch label { position: absolute; top: 0; line-height: 34px; width: 50%; text-align: center; font-size: 0.9em; font-weight: bold; cursor: pointer; margin: 0; color: #999; transition: color 0.4s ease; }
 .toggle-switch label[for$="-private"] { left: 0; }
 .toggle-switch label[for$="-public"] { right: 0; }
 .toggle-switch .toggle-knob { position: absolute; top: 2px; left: 2px; width: calc(50% - 2px); height: 30px; background-color: var(--primary-color); border-radius: 34px; transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
-
-/* Move knob and change active text color when checked */
 .toggle-switch input[value="private"]:checked ~ label[for$="-private"],
 .toggle-switch input[value="public"]:checked ~ label[for$="-public"] { color: white; }
 .toggle-switch input[value="public"]:checked ~ .toggle-knob { transform: translateX(95%); }

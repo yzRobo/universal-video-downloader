@@ -49,6 +49,17 @@
                             <input type="text" class="default-domain" placeholder="https://www.example.com/">
                         </div>
                     </div>
+
+                    <div class="form-group">
+                        <label for="download-format">Download Format</label>
+                        <select class="download-format">
+                            <option value="video-audio" selected>Video + Audio</option>
+                            <option value="video-only">Video Only</option>
+                            <!-- MODIFIED: Split audio into two options -->
+                            <option value="audio-mp3">Audio Only (.mp3)</option>
+                            <option value="audio-m4a">Audio Only (.m4a)</option>
+                        </select>
+                    </div>
                     
                     <hr class="subtle-hr">
 
@@ -57,7 +68,6 @@
                         <!-- Template Video Row (will be cloned) -->
                         <div class="video-row">
                             <input type="text" class="video-url" placeholder="Paste a single Vimeo URL here" required>
-                            <!-- Wrapper for domain override -->
                             <div class="domain-fields-wrapper">
                                 <input type="text" class="domain-override" placeholder="Optional: Override domain for this URL">
                             </div>
@@ -76,8 +86,14 @@
 
         <div id="results-container" class="hidden">
             <h2>Download Progress</h2>
+            <button type="button" id="cancel-btn" class="btn-danger">Cancel All</button>
+
             <div id="progress-bars"></div>
-            <h2>Logs</h2>
+            
+            <div class="logs-header">
+                <h2>Logs</h2>
+                <button type="button" id="toggle-logs-btn" class="btn-secondary">Show Logs</button>
+            </div>
             <pre id="log-output"></pre>
         </div>
     </div>
