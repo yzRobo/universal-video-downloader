@@ -55,11 +55,13 @@ There are two ways to get started:
     *   **On Windows**: `start-server.bat`
     *   **On macOS/Linux**: `chmod +x start-server.sh` and then `./start-server.sh`
 
-3.  **Access the Web UI**
+3. **Access the Web UI**
     Once the server is running, your terminal will display a confirmation message:
+
     ```
     ✅ Server is running on http://localhost:3000
-    Open this URL in your browser to use the downloader.```
+    Open this URL in your browser to use the downloader.
+    ```
 
     Open your favorite web browser and navigate to **http://localhost:3000**.
 
