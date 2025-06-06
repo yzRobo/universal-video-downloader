@@ -105,8 +105,9 @@ document.addEventListener("DOMContentLoaded", () => {
             label.htmlFor = radio.id;
         });
 
-        newSection.querySelector('input[value="private"]').checked = true;
-        newSection.classList.remove('is-public');
+        // MODIFIED: Default new sections to Public mode
+        newSection.querySelector('input[value="public"]').checked = true;
+        newSection.classList.add('is-public');
         
         const videoRowsContainer = newSection.querySelector(".video-rows-container");
         while (videoRowsContainer.children.length > 1) { videoRowsContainer.lastChild.remove(); }
