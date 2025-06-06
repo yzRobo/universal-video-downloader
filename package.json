@@ -1,6 +1,6 @@
 {
   "name": "universal-video-downloader",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "A self-hosted, portable, and powerful web interface for downloading video and audio from hundreds of websites.",
   "main": "server.js",
   "type": "module",
