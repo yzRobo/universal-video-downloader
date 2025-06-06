@@ -1,6 +1,6 @@
-# Vimeo Downloader Web UI
+# Universal Video Downloader
 
-A self-hosted, portable, and powerful web interface for downloading public and private Vimeo videos. This tool uses a self-contained version of FFmpeg to capture HLS streams and VODs, providing a user-friendly way to manage, organize, and customize batch downloads without touching the command line.
+A self-hosted, portable, and powerful web interface for downloading videos from Vimeo, YouTube, Twitter, and more. This tool uses a self-contained version of FFmpeg to capture HLS streams and VODs, providing a user-friendly way to manage, organize, and customize batch downloads without touching the command line.
 
 ## 🎉 Features
 
@@ -36,7 +36,7 @@ There are two ways to get started:
 
 ### Easy Installation (Recommended for most users)
 
-1.  Go to the [**Releases Page**](https://github.com/your-username/vimeo-downloader-ui/releases) of this repository.
+1.  Go to the [**Releases Page**](https://github.com/yzRobo/universal-video-downloader/releases) of this repository.
 2.  Under the latest release, download the `Source code (zip)` file.
 3.  Unzip the folder to a location of your choice.
 4.  Run the startup script for your operating system. It will automatically install all required dependencies (including FFmpeg).
@@ -47,8 +47,8 @@ There are two ways to get started:
 
 1.  **Clone the Repository**
     ```bash
-    git clone https://github.com/your-username/vimeo-downloader-ui.git
-    cd vimeo-downloader-ui
+    git clone https://github.com/yzRobo/universal-video-downloader.git
+    cd universal-video-downloader
     ```
 2.  **Install Dependencies & Run**
     Use the startup scripts, which will install dependencies and start the server:
@@ -76,7 +76,7 @@ The interface is organized into **Sections**. Each section is a batch that will 
     *   **Download Format:** Choose your desired output from the dropdown (Video+Audio, Video Only, MP3, or M4A).
 
 2.  **Add Video URLs:**
-    *   Paste a single Vimeo URL into the input field.
+    *   Paste a single URL into the input field.
     *   **To paste a list:** Copy a list of URLs from a text file and paste it into any URL input. The app will automatically create new rows for you.
     *   Use the **"+ Add Video URL"** button to add more rows manually.
 

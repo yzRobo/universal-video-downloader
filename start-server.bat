@@ -1,5 +1,5 @@
 @echo off
-title Vimeo Downloader Server
+title Universal Downloader Server
 
 echo.
 echo Installing/Verifying dependencies...
