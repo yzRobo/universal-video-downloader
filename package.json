@@ -1,11 +1,12 @@
 {
   "name": "universal-video-downloader",
-  "version": "2.0.2",
-  "description": "A self-hosted, portable, and powerful web interface for downloading video and audio from hundreds of websites.",
+  "version": "3.0.0",
+  "description": "A self-hosted, portable, web interface for downloading video and audio from YouTube, Vimeo, Twitter, and other social websites.",
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "node scripts/setup-yt-dlp.js"
   },
   "author": "",
   "license": "MIT",

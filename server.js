@@ -7,7 +7,6 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { fileURLToPath } from 'url';
-// MODIFIED: Import the ffmpeg-static package
 import ffmpeg from 'ffmpeg-static';
 
 // --- Server Setup ---
@@ -18,6 +17,26 @@ const httpServer = createServer(app);
 const io = new Server(httpServer);
 const PORT = 3000;
 
+// Setup yt-dlp path
+const platform = process.platform;
+const ytDlpPath = path.join(__dirname, 'bin', platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+
+// Check if yt-dlp exists on startup
+async function checkYtDlp() {
+    try {
+        await fs.promises.access(ytDlpPath, fs.constants.X_OK);
+        console.log('✓ yt-dlp found at:', ytDlpPath);
+        return true;
+    } catch (err) {
+        console.error('✗ yt-dlp not found or not executable at:', ytDlpPath);
+        console.error('Please run "npm install" to set up yt-dlp automatically');
+        return false;
+    }
+}
+
+// Check yt-dlp on startup
+checkYtDlp();
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
@@ -25,7 +44,22 @@ app.get('/', (req, res) => {
 
 // --- Module-level variables to handle cancellation ---
 let isCancelled = false;
-let activeFfmpegProcess = null;
+let activeProcess = null;
+
+// --- Platform Detection ---
+function detectPlatform(url) {
+    const urlLower = url.toLowerCase();
+    
+    if (urlLower.includes('vimeo.com')) return 'vimeo';
+    if (urlLower.includes('youtube.com') || urlLower.includes('youtu.be')) return 'youtube';
+    if (urlLower.includes('twitter.com') || urlLower.includes('x.com')) return 'twitter';
+    if (urlLower.includes('instagram.com')) return 'instagram';
+    if (urlLower.includes('tiktok.com')) return 'tiktok';
+    if (urlLower.includes('threads.net')) return 'threads';
+    
+    // Default to yt-dlp for unknown platforms
+    return 'yt-dlp';
+}
 
 // --- WebSocket Connection Handling ---
 io.on("connection", (socket) => {
@@ -40,9 +74,9 @@ io.on("connection", (socket) => {
   socket.on("cancel-download", () => {
     console.log("Cancellation request received from:", socket.id);
     isCancelled = true;
-    if (activeFfmpegProcess) {
+    if (activeProcess) {
         socket.emit("log", { type: 'error', message: '--- CANCELLATION INITIATED BY USER ---' });
-        activeFfmpegProcess.kill('SIGKILL');
+        activeProcess.kill('SIGKILL');
     }
   });
 
@@ -87,45 +121,256 @@ async function processAllBatches(batches, socket) {
 async function runSingleBatch(batchConfig, socket) {
   const { videos, prefixMajor, prefixMinorStart, format } = batchConfig;
   
-  socket.emit("log", { type: "info", message: "Normalizing Vimeo URLs for this batch..." });
-  const processedVideos = videos.map(video => {
-    let newUrl = video.url;
-    const match = video.url.match(/vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/);
-    if (match) {
-        newUrl = `https://player.vimeo.com/video/${match[1]}?h=${match[2]}`;
-    } else {
-        const simpleMatch = video.url.match(/vimeo\.com\/(\d+)$/);
-        if (simpleMatch) {
-            newUrl = `https://player.vimeo.com/video/${simpleMatch[1]}`;
-        }
-    }
-    if (newUrl !== video.url) {
-        socket.emit("log", { type: "info", message: `  Converted: ${video.url} -> ${newUrl}` });
-    }
-    return { ...video, url: newUrl };
-  });
-
-  socket.emit("log", { type: "info", message: `Starting batch download for ${processedVideos.length} videos.`});
+  socket.emit("log", { type: "info", message: `Starting batch download for ${videos.length} videos.`});
   
   let prefixMinorCounter = parseInt(prefixMinorStart, 10);
-  for (let i = 0; i < processedVideos.length; i++) {
+  for (let i = 0; i < videos.length; i++) {
     if (isCancelled) {
         socket.emit("log", { type: 'error', message: `Skipping remaining videos in batch due to cancellation.` });
         break;
     }
-    const video = processedVideos[i];
+    const video = videos[i];
     const filePrefix = `${prefixMajor}.${prefixMinorCounter}_`;
-    await downloadVimeoPrivateVideo(video, i, processedVideos.length, filePrefix, format, socket);
+    const platform = detectPlatform(video.url);
+    
+    socket.emit("log", { type: "info", message: `[${i + 1}/${videos.length}] Detected platform: ${platform}` });
+    
+    if (platform === 'vimeo') {
+        // Process Vimeo URLs as before
+        let newUrl = video.url;
+        const match = video.url.match(/vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/);
+        if (match) {
+            newUrl = `https://player.vimeo.com/video/${match[1]}?h=${match[2]}`;
+        } else {
+            const simpleMatch = video.url.match(/vimeo\.com\/(\d+)$/);
+            if (simpleMatch) {
+                newUrl = `https://player.vimeo.com/video/${simpleMatch[1]}`;
+            }
+        }
+        if (newUrl !== video.url) {
+            socket.emit("log", { type: "info", message: `  Converted: ${video.url} -> ${newUrl}` });
+        }
+        video.url = newUrl;
+        await downloadVimeoPrivateVideo(video, i, videos.length, filePrefix, format, socket);
+    } else {
+        // Use yt-dlp for all other platforms
+        await downloadWithYtDlp(video, i, videos.length, filePrefix, format, platform, socket);
+    }
+    
     prefixMinorCounter++;
   }
 }
 
 // =========================================================================
-//                  CORE VIMEO DOWNLOADER FUNCTIONS
+//                  YT-DLP DOWNLOAD FUNCTION
+// =========================================================================
+async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format, platform, socket) {
+    const logPrefix = `[${index + 1}/${total}]`;
+    
+    // First check if yt-dlp exists
+    try {
+        await fs.promises.access(ytDlpPath, fs.constants.X_OK);
+    } catch (err) {
+        const errorMsg = `${logPrefix} yt-dlp not found at ${ytDlpPath}. Please run 'npm install' to set it up.`;
+        socket.emit("log", { type: "error", message: errorMsg });
+        socket.emit("progress", { index, status: `❌ Error: yt-dlp not found` });
+        return;
+    }
+    
+    socket.emit("log", { type: "info", message: `${logPrefix} Downloading from ${platform} using yt-dlp: ${videoInfo.url}` });
+
+    try {
+        const outputDir = path.join(__dirname, 'downloads');
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+
+        // First, get video info
+        socket.emit("log", { type: "info", message: `${logPrefix} Fetching video information...` });
+        const infoProcess = spawn(ytDlpPath, [
+            '--dump-json',
+            '--no-warnings',
+            videoInfo.url
+        ]);
+
+        let videoInfoJson = '';
+        let errorOutput = '';
+        
+        infoProcess.stdout.on('data', (data) => {
+            videoInfoJson += data.toString();
+        });
+        
+        infoProcess.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+        });
+
+        const videoDetails = await new Promise((resolve) => {
+            infoProcess.on('close', (code) => {
+                if (code === 0 && videoInfoJson) {
+                    try {
+                        const info = JSON.parse(videoInfoJson);
+                        socket.emit("log", { type: "info", message: `${logPrefix} Found video: ${info.title}` });
+                        resolve({
+                            title: info.title || 'Unknown',
+                            duration: info.duration || 0
+                        });
+                    } catch (e) {
+                        socket.emit("log", { type: "error", message: `${logPrefix} Failed to parse video info: ${e.message}` });
+                        resolve({ title: 'Unknown', duration: 0 });
+                    }
+                } else {
+                    socket.emit("log", { type: "error", message: `${logPrefix} Failed to get video info. ${errorOutput}` });
+                    resolve({ title: 'Unknown', duration: 0 });
+                }
+            });
+            
+            infoProcess.on('error', (err) => {
+                socket.emit("log", { type: "error", message: `${logPrefix} Failed to spawn yt-dlp: ${err.message}` });
+                resolve({ title: 'Unknown', duration: 0 });
+            });
+        });
+
+        // Clean filename
+        let filename = (filenamePrefix || "") + videoDetails.title;
+        filename = filename.replace(/[<>:"/\\|?*]/g, '_').trim();
+
+        // Build yt-dlp arguments
+        const ytDlpArgs = [];
+        
+        // Add cookies if domain is provided (for private videos)
+        if (videoInfo.domain) {
+            ytDlpArgs.push('--referer', videoInfo.domain);
+        }
+
+        // Format selection based on user choice
+        switch (format) {
+            case 'audio-mp3':
+                ytDlpArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
+                filename += '.mp3';
+                break;
+            case 'audio-m4a':
+                ytDlpArgs.push('-x', '--audio-format', 'm4a', '--audio-quality', '0');
+                filename += '.m4a';
+                break;
+            case 'video-only':
+                ytDlpArgs.push('-f', 'bestvideo', '--merge-output-format', 'mp4');
+                filename += '_No_Audio.mp4';
+                break;
+            default: // video-audio
+                ytDlpArgs.push('-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4');
+                filename += '.mp4';
+                break;
+        }
+
+        // Common arguments
+        ytDlpArgs.push(
+            '--no-warnings',
+            '--progress',
+            '--newline',
+            '--no-playlist',
+            '--output', path.join(outputDir, filename),
+            videoInfo.url
+        );
+
+        // Start the download
+        socket.emit("progress", {
+            index: index,
+            percentage: 0,
+            status: "⇣ Starting download",
+            size: "0 MB",
+            duration: "00:00:00",
+            filename: filename,
+            speed: "..."
+        });
+
+        activeProcess = spawn(ytDlpPath, ytDlpArgs);
+
+        let lastPercent = 0;
+        activeProcess.stdout.on('data', (data) => {
+            const output = data.toString();
+            
+            // Parse yt-dlp progress output
+            const percentMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+            const speedMatch = output.match(/at\s+([\d.]+\w+\/s)/);
+            const sizeMatch = output.match(/of\s+([\d.]+\w+)/);
+            
+            if (percentMatch) {
+                const percent = parseFloat(percentMatch[1]);
+                lastPercent = percent;
+                
+                socket.emit("progress", {
+                    index: index,
+                    percentage: Math.round(percent),
+                    status: percent < 100 ? "⇣ Downloading" : "Processing...",
+                    size: sizeMatch ? sizeMatch[1] : "Unknown",
+                    speed: speedMatch ? speedMatch[1] : "...",
+                    duration: formatDuration(videoDetails.duration * (percent / 100))
+                });
+            }
+            
+            // Log merging status
+            if (output.includes('[Merger]') || output.includes('[ExtractAudio]')) {
+                socket.emit("progress", {
+                    index: index,
+                    percentage: lastPercent,
+                    status: "🔄 Processing media...",
+                });
+            }
+        });
+
+        activeProcess.stderr.on('data', (data) => {
+            const error = data.toString();
+            if (!error.includes('WARNING')) {
+                socket.emit("log", { type: 'error', message: `${logPrefix} ${error}` });
+            }
+        });
+
+        await new Promise((resolve) => {
+            activeProcess.on('close', (code) => {
+                activeProcess = null;
+                
+                if (isCancelled) {
+                    socket.emit("progress", { index: index, status: `🛑 Cancelled` });
+                    resolve(false);
+                } else if (code === 0) {
+                    socket.emit("progress", { 
+                        index: index, 
+                        percentage: 100, 
+                        status: "✅ Downloaded",
+                        size: fs.existsSync(path.join(outputDir, filename)) ? 
+                            formatBytes(fs.statSync(path.join(outputDir, filename)).size) : "Unknown"
+                    });
+                    socket.emit("log", { type: 'success', message: `${logPrefix} Successfully downloaded: ${filename}` });
+                    resolve(true);
+                } else {
+                    socket.emit("progress", { index: index, status: `❌ Error (code ${code})` });
+                    resolve(false);
+                }
+            });
+            
+            activeProcess.on('error', (err) => {
+                activeProcess = null;
+                const errorMsg = `${logPrefix} Failed to start yt-dlp process: ${err.message}`;
+                socket.emit("log", { type: "error", message: errorMsg });
+                socket.emit("progress", { index: index, status: `❌ Error: ${err.message}` });
+                resolve(false);
+            });
+        });
+
+    } catch (error) {
+        if (isCancelled) return;
+        const errorMsg = `${logPrefix} Failed to download video: ${error.message}`;
+        socket.emit("log", { type: "error", message: errorMsg });
+        socket.emit("progress", { index, status: `❌ Error: ${error.message}` });
+    }
+}
+
+// =========================================================================
+//                  VIMEO DOWNLOADER (ORIGINAL CODE)
 // =========================================================================
 async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix, format, socket) {
   const logPrefix = `[${index + 1}/${total}]`;
-  socket.emit("log", { type: "info", message: `${logPrefix} Fetching details for ${videoInfo.url}` });
+  socket.emit("log", { type: "info", message: `${logPrefix} Fetching Vimeo details for ${videoInfo.url}` });
 
   try {
     let playerConfig;
@@ -233,12 +478,10 @@ async function downloadHLSStream(m3u8Url, outputFilename, duration, format, reso
     console.warn("Could not remove existing file:", e.message);
   }
 
-  // Use the path from the ffmpeg-static package instead of the global command
-  console.log('--- Using FFmpeg from path:', ffmpeg);
-  activeFfmpegProcess = spawn(ffmpeg, ffmpegArgs);
+  activeProcess = spawn(ffmpeg, ffmpegArgs);
 
-  activeFfmpegProcess.on("close", (code) => {
-    activeFfmpegProcess = null;
+  activeProcess.on("close", (code) => {
+    activeProcess = null;
     
     if (isCancelled) {
         console.log(`FFmpeg process for video ${videoIndex} was killed by user.`);
@@ -260,7 +503,7 @@ async function downloadHLSStream(m3u8Url, outputFilename, duration, format, reso
     }
   });
 
-  activeFfmpegProcess.stderr.on("data", (data) => {
+  activeProcess.stderr.on("data", (data) => {
     const dataStr = data.toString();
     if (dataStr.includes("time=")) {
       const timeMatch = dataStr.match(/time=(\s*\d{2}:\d{2}:\d{2}\.\d{2})/);
@@ -289,8 +532,8 @@ async function downloadHLSStream(m3u8Url, outputFilename, duration, format, reso
     }
   });
 
-  activeFfmpegProcess.on("error", (err) => {
-    activeFfmpegProcess = null;
+  activeProcess.on("error", (err) => {
+    activeProcess = null;
     const errorMsg = `${pre} Failed to start FFmpeg process: ${err.message}`;
     socket.emit("log", { type: "error", message: errorMsg });
     socket.emit("progress", { index: videoIndex, status: `❌ Error`});
@@ -321,4 +564,19 @@ function calculatePercentage(timeStr, x) {
     console.log("Error calculating percentage for:", timeStr, x);
     return 0;
   }
+}
+
+function formatDuration(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }

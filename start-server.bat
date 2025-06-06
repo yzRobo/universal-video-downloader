@@ -1,7 +1,14 @@
 @echo off
-title Universal Downloader Server
+title Universal Video Downloader Server
 
 echo.
+echo ====================================
+echo Universal Video Downloader
+echo ====================================
+echo.
+echo Supports: YouTube, Vimeo, Twitter, Instagram, TikTok, Threads, and 1000+ sites
+echo.
+
 echo Installing/Verifying dependencies...
 call npm install
 IF %ERRORLEVEL% NEQ 0 (
@@ -12,8 +19,11 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
+echo Dependencies installed successfully!
+echo.
 echo Starting Node.js server...
 echo To stop the server, close this window or press CTRL+C.
+echo.
 
 node server.js
 

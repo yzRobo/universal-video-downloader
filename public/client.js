@@ -13,6 +13,36 @@ document.addEventListener("DOMContentLoaded", () => {
     const cancelBtn = document.getElementById("cancel-btn");
     const toggleLogsBtn = document.getElementById("toggle-logs-btn");
 
+    // Platform detection function
+    function detectPlatform(url) {
+        const urlLower = url.toLowerCase();
+        
+        if (urlLower.includes('vimeo.com')) return { name: 'vimeo', display: 'Vimeo' };
+        if (urlLower.includes('youtube.com') || urlLower.includes('youtu.be')) return { name: 'youtube', display: 'YouTube' };
+        if (urlLower.includes('twitter.com') || urlLower.includes('x.com')) return { name: 'twitter', display: 'Twitter/X' };
+        if (urlLower.includes('instagram.com')) return { name: 'instagram', display: 'Instagram' };
+        if (urlLower.includes('tiktok.com')) return { name: 'tiktok', display: 'TikTok' };
+        if (urlLower.includes('threads.net')) return { name: 'threads', display: 'Threads' };
+        
+        return { name: 'other', display: 'Supported' };
+    }
+
+    // Update platform indicator for a video row
+    function updatePlatformIndicator(videoRow) {
+        const urlInput = videoRow.querySelector('.video-url');
+        const indicator = videoRow.querySelector('.platform-indicator');
+        const url = urlInput.value.trim();
+        
+        if (url) {
+            const platform = detectPlatform(url);
+            indicator.textContent = platform.display;
+            indicator.className = `platform-indicator ${platform.name}`;
+            indicator.style.display = 'inline-block';
+        } else {
+            indicator.style.display = 'none';
+        }
+    }
+
     // --- Event Delegation for UI elements ---
     sectionsContainer.addEventListener("click", (e) => {
         const target = e.target;
@@ -24,6 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const newRow = firstRow.cloneNode(true);
             newRow.querySelector(".video-url").value = "";
             newRow.querySelector(".domain-override").value = "";
+            newRow.querySelector(".platform-indicator").style.display = "none";
             videoRowsContainer.appendChild(newRow);
         }
 
@@ -50,6 +81,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    // Update platform indicator on URL input
+    sectionsContainer.addEventListener('input', (e) => {
+        if (e.target.classList.contains('video-url')) {
+            updatePlatformIndicator(e.target.closest('.video-row'));
+        }
+    });
+
     sectionsContainer.addEventListener('paste', (e) => {
         if (!e.target.classList.contains('video-url')) {
             return;
@@ -66,13 +104,18 @@ document.addEventListener("DOMContentLoaded", () => {
             const currentRow = targetInput.closest('.video-row');
             const container = currentRow.parentElement;
             targetInput.value = urls[0];
+            updatePlatformIndicator(currentRow);
             const remainingUrls = urls.slice(1);
             remainingUrls.forEach(url => {
                 const newRow = currentRow.cloneNode(true);
                 newRow.querySelector('.video-url').value = url;
                 newRow.querySelector('.domain-override').value = "";
                 container.appendChild(newRow);
+                updatePlatformIndicator(newRow);
             });
+        } else if (urls.length === 1) {
+            // Still update the platform indicator for single URL paste
+            setTimeout(() => updatePlatformIndicator(e.target.closest('.video-row')), 0);
         }
     });
 
@@ -105,12 +148,14 @@ document.addEventListener("DOMContentLoaded", () => {
             label.htmlFor = radio.id;
         });
 
-        // MODIFIED: Default new sections to Public mode
         newSection.querySelector('input[value="public"]').checked = true;
         newSection.classList.add('is-public');
         
         const videoRowsContainer = newSection.querySelector(".video-rows-container");
         while (videoRowsContainer.children.length > 1) { videoRowsContainer.lastChild.remove(); }
+        
+        // Hide platform indicator in new section
+        newSection.querySelector('.platform-indicator').style.display = 'none';
         
         newSection.querySelector(".remove-section-btn").style.display = "inline-block";
         sectionsContainer.appendChild(newSection);
@@ -153,9 +198,6 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!prefixMajor || !prefixMinorStart) {
                 alert(`Error in Section ${index + 1}: Prefix fields are required.`); hasError = true; return;
             }
-            if (downloadType === 'private' && !defaultDomain) {
-                alert(`Error in Section ${index + 1}: Default Domain is required for Private downloads.`); hasError = true; return;
-            }
 
             const videos = [];
             const videoRows = section.querySelectorAll(".video-row");
@@ -164,7 +206,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const url = row.querySelector(".video-url").value.trim();
                 let domain = '';
 
-                if (downloadType === 'private') {
+                if (downloadType === 'private' || defaultDomain) {
                     const overrideDomain = row.querySelector(".domain-override").value.trim();
                     domain = overrideDomain || defaultDomain;
                 }
@@ -229,7 +271,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (status) {
             details.textContent = status;
             if (status.includes("Error") || status.includes("Cancelled")) progressBar.classList.add("error");
-        } else {
+        } else if (size && duration) {
             details.textContent = `Time: ${duration} | Size: ${size}`;
         }
     });

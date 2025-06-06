@@ -9,6 +9,14 @@
     --error-color: #dc3545;
     --info-color: #17a2b8;
     --progress-bg: #444;
+    
+    /* Platform colors */
+    --youtube-color: #FF0000;
+    --vimeo-color: #1ab7ea;
+    --twitter-color: #1DA1F2;
+    --instagram-color: #E4405F;
+    --tiktok-color: #000000;
+    --threads-color: #000000;
 }
 
 body {
@@ -44,8 +52,86 @@ h2 {
     text-align: center;
     color: #aaa;
     margin-top: 0;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
+
+/* Supported Platforms Section */
+.supported-platforms {
+    background-color: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    text-align: center;
+}
+
+.supported-platforms h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    color: #ccc;
+}
+
+.platform-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+.platform-badge {
+    padding: 0.4rem 0.8rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: white;
+    background-color: #555;
+    border: 1px solid transparent;
+}
+
+.platform-badge.youtube { background-color: var(--youtube-color); }
+.platform-badge.vimeo { background-color: var(--vimeo-color); }
+.platform-badge.twitter { background-color: var(--twitter-color); }
+.platform-badge.instagram { 
+    background: linear-gradient(45deg, #f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%); 
+}
+.platform-badge.tiktok { 
+    background-color: var(--tiktok-color); 
+    border: 1px solid #fff;
+}
+.platform-badge.threads { 
+    background-color: var(--threads-color); 
+    border: 1px solid #fff;
+}
+.platform-badge.other { background-color: #6c757d; }
+
+/* Platform Indicator in Video Rows */
+.platform-indicator {
+    display: none;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: white;
+    background-color: #555;
+    white-space: nowrap;
+}
+
+.platform-indicator.youtube { background-color: var(--youtube-color); }
+.platform-indicator.vimeo { background-color: var(--vimeo-color); }
+.platform-indicator.twitter { background-color: var(--twitter-color); }
+.platform-indicator.instagram { 
+    background: linear-gradient(45deg, #f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%); 
+}
+.platform-indicator.tiktok { 
+    background-color: var(--tiktok-color); 
+    color: white;
+    border: 1px solid #fff;
+}
+.platform-indicator.threads { 
+    background-color: var(--threads-color); 
+    color: white;
+    border: 1px solid #fff;
+}
+.platform-indicator.other { background-color: #6c757d; }
 
 .form-grid {
     display: grid;
@@ -208,7 +294,15 @@ hr { border: none; border-top: 1px solid var(--border-color); margin: 1.5rem 0; 
 /* Video List Styling */
 .video-list-label { font-weight: bold; display: block; margin-bottom: 0.75rem; }
 .video-rows-container { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; }
-.video-row { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; gap: 0.75rem; }
+.video-row { 
+    display: grid; 
+    grid-template-columns: 1fr auto 1fr auto; 
+    align-items: center; 
+    gap: 0.75rem; 
+}
+.download-section.is-public .video-row { 
+    grid-template-columns: 1fr auto auto; 
+}
 .video-row .video-url { flex-grow: 1; }
 .add-video-btn { background-color: transparent; border: 1px dashed var(--info-color); color: var(--info-color); padding: 0.4rem 1rem; font-size: 0.9rem; width: auto; }
 .add-video-btn:hover:not(:disabled) { background-color: rgba(23, 162, 184, 0.2); border-style: solid; }
@@ -218,7 +312,6 @@ hr { border: none; border-top: 1px solid var(--border-color); margin: 1.5rem 0; 
 /* --- STYLES FOR TOGGLE --- */
 .form-group-toggle { flex-direction: row; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
 .download-section.is-public .domain-fields-wrapper { display: none; }
-.download-section.is-public .video-row { grid-template-columns: 1fr auto; }
 .toggle-switch { position: relative; display: inline-block; width: 140px; height: 34px; background-color: #333; border-radius: 34px; border: 1px solid var(--border-color); }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
 .toggle-switch label { position: absolute; top: 0; line-height: 34px; width: 50%; text-align: center; font-size: 0.9em; font-weight: bold; cursor: pointer; margin: 0; color: #999; transition: color 0.4s ease; }
