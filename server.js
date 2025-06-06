@@ -22,67 +22,68 @@ const PORT = 3000;
 const platform = process.platform;
 const ytDlpPath = path.join(__dirname, 'bin', platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
+// =========================================================================
+//                  THE FINAL ATTEMPT - A NEW APPROACH
+// =========================================================================
+function spawnYtDlp(args, options = {}) {
+    if (platform === 'win32') {
+        // This is the final approach. We construct the full command string
+        // ourselves and pass it to Node's built-in shell. This is handled
+        // differently than spawning cmd.exe directly and is our last best
+        // chance to solve the pop-up window issue.
+
+        // We must carefully quote arguments that contain spaces.
+        const quote = (str) => `"${str}"`;
+        const quotedArgs = args.map(arg => arg.includes(' ') ? quote(arg) : arg);
+
+        // The command combines start /B with the executable and its arguments.
+        const command = `start "" /B ${quote(ytDlpPath)} ${quotedArgs.join(' ')}`;
+
+        // We pass the command as a single string and use the shell: true option.
+        return spawn(command, [], {
+            ...options,
+            shell: true,
+            windowsHide: true
+        });
+    } else {
+        // For macOS and Linux, direct execution remains correct.
+        return spawn(ytDlpPath, args, options);
+    }
+}
+
+
 // Check if yt-dlp exists on startup
 async function checkYtDlp() {
   try {
       await fs.promises.access(ytDlpPath, fs.constants.F_OK);
       console.log('✓ yt-dlp found at:', ytDlpPath);
       
-      // Test if yt-dlp is working
-      try {
-          const testProcess = spawn(ytDlpPath, ['--version'], {
-              shell: platform === 'win32', // Use shell on Windows
-              windowsHide: true
+      const testProcess = spawnYtDlp(['--version']);
+      
+      let output = '';
+      testProcess.stdout.on('data', (data) => output += data.toString());
+      
+      let errorOutput = '';
+      testProcess.stderr.on('data', (data) => errorOutput += data.toString());
+      
+      const code = await new Promise((resolve) => {
+          testProcess.on('close', (code) => resolve(code));
+          testProcess.on('error', (err) => {
+              console.error('✗ Error testing yt-dlp:', err.message);
+              resolve(1);
           });
-          
-          let output = '';
-          testProcess.stdout.on('data', (data) => {
-              output += data.toString();
-          });
-          
-          const code = await new Promise((resolve) => {
-              testProcess.on('close', (code) => resolve(code));
-              testProcess.on('error', (err) => {
-                  console.error('✗ Error testing yt-dlp:', err.message);
-                  resolve(1);
-              });
-          });
-          
-          if (code === 0) {
-              console.log('✓ yt-dlp version:', output.trim());
-              return true;
-          } else {
-              console.error('✗ yt-dlp test failed with exit code:', code);
-              return false;
-          }
-      } catch (error) {
-          console.error('✗ Error testing yt-dlp:', error.message);
-          // Try alternative approach for Windows
-          if (platform === 'win32') {
-              console.log('Attempting alternative execution method...');
-              try {
-                  const altProcess = spawn('cmd', ['/c', ytDlpPath, '--version'], {
-                      windowsHide: true
-                  });
-                  
-                  const altCode = await new Promise((resolve) => {
-                      altProcess.on('close', (code) => resolve(code));
-                      altProcess.on('error', () => resolve(1));
-                  });
-                  
-                  if (altCode === 0) {
-                      console.log('✓ Alternative execution method works');
-                      return true;
-                  }
-              } catch (altError) {
-                  console.error('✗ Alternative method also failed:', altError.message);
-              }
-          }
+      });
+      
+      if (code === 0) {
+          console.log('✓ yt-dlp version:', output.trim() || '(No version output)');
+          return true;
+      } else {
+          console.error(`✗ yt-dlp test failed with exit code: ${code}`);
+          console.error(`Stderr: ${errorOutput}`);
           return false;
       }
   } catch (err) {
       console.error('✗ yt-dlp not found at:', ytDlpPath);
-      console.error('Please run "npm install" to set up yt-dlp automatically');
       return false;
   }
 }
@@ -110,7 +111,6 @@ function detectPlatform(url) {
     if (urlLower.includes('tiktok.com')) return 'tiktok';
     if (urlLower.includes('threads.net')) return 'threads';
     
-    // Default to yt-dlp for unknown platforms
     return 'yt-dlp';
 }
 
@@ -189,7 +189,6 @@ async function runSingleBatch(batchConfig, socket) {
     socket.emit("log", { type: "info", message: `[${i + 1}/${videos.length}] Detected platform: ${platform}` });
     
     if (platform === 'vimeo') {
-        // Process Vimeo URLs as before
         let newUrl = video.url;
         const match = video.url.match(/vimeo\.com\/(\d+)\/([a-zA-Z0-9]+)/);
         if (match) {
@@ -206,27 +205,11 @@ async function runSingleBatch(batchConfig, socket) {
         video.url = newUrl;
         await downloadVimeoPrivateVideo(video, i, videos.length, filePrefix, format, socket);
     } else {
-        // Use yt-dlp for all other platforms
         await downloadWithYtDlp(video, i, videos.length, filePrefix, format, platform, socket);
     }
     
     prefixMinorCounter++;
   }
-}
-
-// Helper function to spawn yt-dlp with proper Windows handling
-function spawnYtDlp(args, options = {}) {
-    if (platform === 'win32') {
-        // On Windows, use shell execution or cmd wrapper
-        return spawn(ytDlpPath, args, {
-            ...options,
-            shell: true,
-            windowsHide: true,
-            windowsVerbatimArguments: true
-        });
-    } else {
-        return spawn(ytDlpPath, args, options);
-    }
 }
 
 // =========================================================================
@@ -235,11 +218,10 @@ function spawnYtDlp(args, options = {}) {
 async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format, platform, socket) {
   const logPrefix = `[${index + 1}/${total}]`;
   
-  // First check if yt-dlp exists
   try {
       await fs.promises.access(ytDlpPath, fs.constants.F_OK);
   } catch (err) {
-      const errorMsg = `${logPrefix} yt-dlp not found at ${ytDlpPath}. Please run 'npm install' to set it up.`;
+      const errorMsg = `${logPrefix} yt-dlp not found. Please run 'npm install'.`;
       socket.emit("log", { type: "error", message: errorMsg });
       socket.emit("progress", { index, status: `❌ Error: yt-dlp not found` });
       return;
@@ -253,36 +235,24 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
           fs.mkdirSync(outputDir, { recursive: true });
       }
 
-      // First, get video info using a more robust approach
       socket.emit("log", { type: "info", message: `${logPrefix} Fetching video information...` });
       
       let videoInfoJson = '';
       let errorOutput = '';
       
       try {
-          const infoProcess = spawnYtDlp([
-              '--dump-json',
-              '--no-warnings',
-              videoInfo.url
-          ]);
+          const infoProcess = spawnYtDlp(['--dump-json', '--no-warnings', videoInfo.url]);
           
-          infoProcess.stdout.on('data', (data) => {
-              videoInfoJson += data.toString();
-          });
-          
+          infoProcess.stdout.on('data', (data) => videoInfoJson += data.toString());
           infoProcess.stderr.on('data', (data) => {
               errorOutput += data.toString();
-              const errorMsg = data.toString().trim();
-              if (errorMsg && !errorMsg.includes('WARNING')) {
-                  socket.emit("log", { type: "info", message: `${logPrefix} yt-dlp: ${errorMsg}` });
+              if (data.toString()) {
+                 socket.emit("log", { type: "info", message: `${logPrefix} yt-dlp: ${data.toString()}` });
               }
-          });
+            });
           
           const infoCode = await new Promise((resolve) => {
-              infoProcess.on('close', (code) => {
-                  resolve(code);
-              });
-              
+              infoProcess.on('close', (code) => resolve(code));
               infoProcess.on('error', (err) => {
                   errorOutput += err.message;
                   socket.emit("log", { type: "error", message: `${logPrefix} Error spawning yt-dlp: ${err.message}` });
@@ -291,73 +261,38 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
           });
           
           if (infoCode !== 0) {
-              throw new Error(`yt-dlp exited with code ${infoCode}. ${errorOutput}`);
+              throw new Error(`yt-dlp exited with code ${infoCode}.`);
           }
       } catch (error) {
-          socket.emit("log", { type: "error", message: `${logPrefix} Failed to run yt-dlp: ${error.message}` });
-          
-          // Try alternative method on Windows
-          if (process.platform === 'win32') {
-              socket.emit("log", { type: "info", message: `${logPrefix} Trying alternative execution method...` });
-              
-              try {
-                  const altProcess = spawn('cmd', ['/c', ytDlpPath, '--dump-json', '--no-warnings', videoInfo.url], {
-                      windowsHide: true
-                  });
-                  
-                  videoInfoJson = '';
-                  altProcess.stdout.on('data', (data) => {
-                      videoInfoJson += data.toString();
-                  });
-                  
-                  const altCode = await new Promise((resolve) => {
-                      altProcess.on('close', (code) => resolve(code));
-                      altProcess.on('error', () => resolve(1));
-                  });
-                  
-                  if (altCode !== 0) {
-                      throw new Error('Alternative execution method also failed');
-                  }
-              } catch (altError) {
-                  socket.emit("log", { type: "error", message: `${logPrefix} Alternative method failed: ${altError.message}` });
-                  throw error;
-              }
-          } else {
-              throw error;
-          }
+          const finalErrorMsg = `${logPrefix} Failed to run yt-dlp: ${error.message}. Stderr: ${errorOutput}`;
+          socket.emit("log", { type: "error", message: finalErrorMsg });
+          throw new Error(finalErrorMsg);
       }
 
       let videoDetails = { title: 'Unknown', duration: 0 };
       
       if (videoInfoJson) {
           try {
-              const info = JSON.parse(videoInfoJson);
+              const lastLine = videoInfoJson.trim().split('\n').pop();
+              const info = JSON.parse(lastLine);
               socket.emit("log", { type: "info", message: `${logPrefix} Found video: ${info.title}` });
-              videoDetails = {
-                  title: info.title || 'Unknown',
-                  duration: info.duration || 0
-              };
+              videoDetails = { title: info.title || 'Unknown', duration: info.duration || 0 };
           } catch (e) {
               socket.emit("log", { type: "error", message: `${logPrefix} Failed to parse video info: ${e.message}` });
           }
       } else {
           socket.emit("log", { type: "error", message: `${logPrefix} No video info returned. ${errorOutput}` });
-          // Try to continue anyway
       }
 
-      // Clean filename
       let filename = (filenamePrefix || "") + videoDetails.title;
       filename = filename.replace(/[<>:"/\\|?*]/g, '_').trim();
 
-      // Build yt-dlp arguments
       const ytDlpArgs = [];
       
-      // Add cookies if domain is provided (for private videos)
       if (videoInfo.domain) {
           ytDlpArgs.push('--referer', videoInfo.domain);
       }
 
-      // Format selection based on user choice
       switch (format) {
           case 'audio-mp3':
               ytDlpArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
@@ -371,125 +306,85 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
               ytDlpArgs.push('-f', 'bestvideo', '--merge-output-format', 'mp4');
               filename += '_No_Audio.mp4';
               break;
-          default: // video-audio
+          default:
               ytDlpArgs.push('-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4');
               filename += '.mp4';
               break;
       }
 
-      // Common arguments
       ytDlpArgs.push(
-          '--no-warnings',
-          '--progress',
-          '--newline',
-          '--no-playlist',
-          '--output', path.join(outputDir, filename),
+          '--no-warnings', '--progress', '--newline', '--no-playlist',
+          `--output`, `${path.join(outputDir, filename)}`,
           videoInfo.url
       );
 
-      // Add FFmpeg location for Windows
       if (ffmpeg) {
           ytDlpArgs.push('--ffmpeg-location', ffmpeg);
       }
 
-      // Start the download
       socket.emit("progress", {
-          index: index,
-          percentage: 0,
-          status: "⇣ Starting download",
-          size: "0 MB",
-          duration: "00:00:00",
-          filename: filename,
-          speed: "..."
+          index: index, percentage: 0, status: "⇣ Starting download", size: "0 MB",
+          duration: "00:00:00", filename: filename, speed: "..."
       });
 
-      try {
-          activeProcess = spawnYtDlp(ytDlpArgs);
+      activeProcess = spawnYtDlp(ytDlpArgs);
+      
+      let lastPercent = 0;
+      
+      activeProcess.stdout.on('data', (data) => {
+          const output = data.toString();
+          const percentMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+          const speedMatch = output.match(/at\s+([\d.]+\w+\/s)/);
+          const sizeMatch = output.match(/of\s+([\d.]+\w+)/);
           
-          // Debug info
-          socket.emit("log", { type: "info", message: `${logPrefix} Running yt-dlp with path: ${ytDlpPath}` });
-          
-          let lastPercent = 0;
-          
-          activeProcess.stdout.on('data', (data) => {
-              const output = data.toString();
+          if (percentMatch) {
+              const percent = parseFloat(percentMatch[1]);
+              lastPercent = percent;
               
-              // Parse yt-dlp progress output
-              const percentMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
-              const speedMatch = output.match(/at\s+([\d.]+\w+\/s)/);
-              const sizeMatch = output.match(/of\s+([\d.]+\w+)/);
-              
-              if (percentMatch) {
-                  const percent = parseFloat(percentMatch[1]);
-                  lastPercent = percent;
-                  
-                  socket.emit("progress", {
-                      index: index,
-                      percentage: Math.round(percent),
-                      status: percent < 100 ? "⇣ Downloading" : "Processing...",
-                      size: sizeMatch ? sizeMatch[1] : "Unknown",
-                      speed: speedMatch ? speedMatch[1] : "...",
-                      duration: formatDuration(videoDetails.duration * (percent / 100))
-                  });
-              }
-              
-              // Log merging status
-              if (output.includes('[Merger]') || output.includes('[ExtractAudio]')) {
-                  socket.emit("progress", {
-                      index: index,
-                      percentage: lastPercent,
-                      status: "🔄 Processing media...",
-                  });
-              }
-          });
-
-          activeProcess.stderr.on('data', (data) => {
-              const error = data.toString();
-              if (!error.includes('WARNING')) {
-                  socket.emit("log", { type: 'error', message: `${logPrefix} ${error}` });
-              }
-          });
-
-          const downloadCode = await new Promise((resolve) => {
-              activeProcess.on('close', (code) => {
-                  activeProcess = null;
-                  resolve(code);
+              socket.emit("progress", {
+                  index: index, percentage: Math.round(percent), status: percent < 100 ? "⇣ Downloading" : "Processing...",
+                  size: sizeMatch ? sizeMatch[1] : "Unknown", speed: speedMatch ? speedMatch[1] : "...",
+                  duration: formatDuration(videoDetails.duration * (percent / 100))
               });
-              
-              activeProcess.on('error', (err) => {
-                  activeProcess = null;
-                  socket.emit("log", { type: "error", message: `${logPrefix} Error spawning yt-dlp: ${err.message}` });
-                  resolve(1);
-              });
-          });
-          
-          if (isCancelled) {
-              socket.emit("progress", { index: index, status: `🛑 Cancelled` });
-              return false;
-          } else if (downloadCode === 0) {
-              socket.emit("progress", { 
-                  index: index, 
-                  percentage: 100, 
-                  status: "✅ Downloaded",
-                  size: fs.existsSync(path.join(outputDir, filename)) ? 
-                      formatBytes(fs.statSync(path.join(outputDir, filename)).size) : "Unknown"
-              });
-              socket.emit("log", { type: 'success', message: `${logPrefix} Successfully downloaded: ${filename}` });
-              return true;
-          } else {
-              socket.emit("progress", { index: index, status: `❌ Error (code ${downloadCode})` });
-              return false;
           }
-      } catch (error) {
-          socket.emit("log", { type: "error", message: `${logPrefix} Failed to spawn yt-dlp process: ${error.message}` });
-          throw error;
-      }
+          
+          if (output.includes('[Merger]') || output.includes('[ExtractAudio]')) {
+              socket.emit("progress", { index: index, percentage: lastPercent, status: "🔄 Processing media..." });
+          }
+      });
 
+      activeProcess.stderr.on('data', (data) => {
+          const error = data.toString();
+          if (!error.includes('WARNING')) {
+              socket.emit("log", { type: 'error', message: `${logPrefix} ${error}` });
+          }
+      });
+
+      const downloadCode = await new Promise((resolve) => {
+          activeProcess.on('close', (code) => { activeProcess = null; resolve(code); });
+          activeProcess.on('error', (err) => {
+              activeProcess = null;
+              socket.emit("log", { type: "error", message: `${logPrefix} Error spawning yt-dlp: ${err.message}` });
+              resolve(1);
+          });
+      });
+      
+      if (isCancelled) {
+          socket.emit("progress", { index: index, status: `🛑 Cancelled` });
+      } else if (downloadCode === 0) {
+          socket.emit("progress", { 
+              index: index, percentage: 100, status: "✅ Downloaded",
+              size: fs.existsSync(path.join(outputDir, filename)) ? formatBytes(fs.statSync(path.join(outputDir, filename)).size) : "Unknown"
+          });
+          socket.emit("log", { type: 'success', message: `${logPrefix} Successfully downloaded: ${filename}` });
+      } else {
+          socket.emit("progress", { index: index, status: `❌ Error (code ${downloadCode})` });
+      }
   } catch (error) {
-      if (isCancelled) return;
-      const errorMsg = `${logPrefix} Failed to download video: ${error.message}`;
-      socket.emit("log", { type: "error", message: errorMsg });
-      socket.emit("progress", { index, status: `❌ Error: ${error.message}` });
+    if (isCancelled) return;
+    const errorMsg = `${logPrefix} Failed to download video: ${error.message}`;
+    socket.emit("log", { type: "error", message: errorMsg });
+    socket.emit("progress", { index, status: `❌ Error: ${error.message}` });
   }
 }
 
