@@ -1,6 +1,6 @@
 {
   "name": "vimeo-downloader-ui",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A web interface for a private Vimeo downloader.",
   "main": "server.js",
   "type": "module",
