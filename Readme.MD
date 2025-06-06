@@ -53,6 +53,8 @@ There are two ways to get started:
     *   **On Windows:** Double-click `start-server.bat`.
     *   **On macOS/Linux:** Open a terminal, navigate to the folder, and run `chmod +x start-server.sh` followed by `./start-server.sh`.
 
+Open your web browser and navigate to **http://localhost:3000**.
+
 ### Developer Setup
 
 1.  **Clone the Repository**
@@ -73,7 +75,7 @@ There are two ways to get started:
     Open this URL in your browser to use the downloader.
     ```
 
-    Open your web browser and navigate to **http://localhost:3000**.
+Open your web browser and navigate to **http://localhost:3000**.
 
 ## How to Use the Interface
 
