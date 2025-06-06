@@ -8,14 +8,13 @@
 </head>
 <body>
     <div class="container">
-        <h1>Vimeo Downloader</h1>
-        <p class="subtitle">Organize downloads into sections. Each section will run sequentially.</p>
+        <h1>Universal Video Downloader</h1>
+        <p class="subtitle">Download videos from YouTube, Vimeo, Twitter, Instagram, TikTok, and more</p>
         
         <form id="download-form">
             <!-- Container for dynamic sections -->
             <div id="sections-container">
                 <!-- Template Section (will be cloned) -->
-                <!-- MODIFIED: Added 'is-public' class to hide domain fields by default -->
                 <div class="download-section is-public">
                     <button type="button" class="remove-section-btn" style="display: none;">Remove Section</button>
                     <h3 class="section-title">Section 1</h3>
@@ -24,10 +23,8 @@
                     <div class="form-group form-group-toggle">
                         <label>Download Type</label>
                         <div class="toggle-switch">
-                            <!-- MODIFIED: Removed 'checked' from private -->
                             <input type="radio" id="s1-private" name="download-type-s1" class="download-type" value="private">
                             <label for="s1-private">Private</label>
-                            <!-- MODIFIED: Added 'checked' to public -->
                             <input type="radio" id="s1-public" name="download-type-s1" class="download-type" value="public" checked>
                             <label for="s1-public">Public</label>
                             <span class="toggle-knob"></span>
@@ -48,8 +45,8 @@
                     <!-- Wrapper for domain fields -->
                     <div class="domain-fields-wrapper">
                         <div class="form-group">
-                            <label>Default Domain for this Section</label>
-                            <input type="text" class="default-domain" placeholder="https://www.example.com/">
+                            <label>Default Domain/Referer for this Section</label>
+                            <input type="text" class="default-domain" placeholder="https://www.example.com/ (optional for most sites)">
                         </div>
                     </div>
 
@@ -69,7 +66,8 @@
                     <div class="video-rows-container">
                         <!-- Template Video Row (will be cloned) -->
                         <div class="video-row">
-                            <input type="text" class="video-url" placeholder="Paste a single Vimeo URL here" required>
+                            <input type="text" class="video-url" placeholder="Paste video URL (YouTube, Vimeo, Twitter, etc.)" required>
+                            <span class="platform-indicator"></span>
                             <div class="domain-fields-wrapper">
                                 <input type="text" class="domain-override" placeholder="Optional: Override domain for this URL">
                             </div>
