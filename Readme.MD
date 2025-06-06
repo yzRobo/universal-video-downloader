@@ -1,6 +1,6 @@
 # Vimeo Downloader Web UI
 
-A self-hosted, portable, and powerful web interface for downloading public and private Vimeo videos. This tool uses a self-contained version of FFmpeg to capture HLS streams, providing a user-friendly way to manage, organize, and customize batch downloads without touching the command line.
+A self-hosted, portable, and powerful web interface for downloading public and private Vimeo videos. This tool uses a self-contained version of FFmpeg to capture HLS streams and VODs, providing a user-friendly way to manage, organize, and customize batch downloads without touching the command line.
 
 ## 🎉 Features
 
