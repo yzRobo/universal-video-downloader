@@ -22,15 +22,8 @@ const PORT = 3000;
 const platform = process.platform;
 const ytDlpPath = path.join(__dirname, 'bin', platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
-// =========================================================================
-//                  THE FINAL ATTEMPT - A NEW APPROACH
-// =========================================================================
 function spawnYtDlp(args, options = {}) {
     if (platform === 'win32') {
-        // This is the final approach. We construct the full command string
-        // ourselves and pass it to Node's built-in shell. This is handled
-        // differently than spawning cmd.exe directly and is our last best
-        // chance to solve the pop-up window issue.
 
         // We must carefully quote arguments that contain spaces.
         const quote = (str) => `"${str}"`;
@@ -284,8 +277,14 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
           socket.emit("log", { type: "error", message: `${logPrefix} No video info returned. ${errorOutput}` });
       }
 
-      let filename = (filenamePrefix || "") + videoDetails.title;
-      filename = filename.replace(/[<>:"/\\|?*]/g, '_').trim();
+      // *** CHANGE 1 of 2: Sanitize the filename to prevent double extensions ***
+      const sanitizedTitle = (videoDetails.title || 'Unknown')
+          .replace(/\.(mp4|mkv|webm|mov|avi|mp3|m4a)$/i, '') // Remove common media extensions
+          .replace(/[<>:"/\\|?*]/g, '_') // Replace illegal characters
+          .trim();
+      
+      let filename = (filenamePrefix || "") + sanitizedTitle;
+      // *** END OF CHANGE 1 ***
 
       const ytDlpArgs = [];
       
@@ -410,8 +409,17 @@ async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix
     }
     
     const stream = playerConfig.streamUrl;
-    let defaultFilename = (filenamePrefix || "") + playerConfig.title;
-    defaultFilename = defaultFilename.replace(/\s+on Vimeo$/i, "").trim().replace(/[<>:"/\\|?*]/g, '_') + '.mp4';
+
+    // *** CHANGE 2 of 2: Sanitize the filename to prevent double extensions ***
+    const sanitizedTitle = playerConfig.title
+        .replace(/\.(mp4|mkv|webm|mov|avi)$/i, '') // Remove common video extensions
+        .replace(/\s+on Vimeo$/i, "")              // Remove " on Vimeo" suffix
+        .trim()                                    // Trim whitespace
+        .replace(/[<>:"/\\|?*]/g, '_');           // Replace illegal filename characters
+    
+    // Always create a base .mp4 filename. downloadHLSStream will adjust for other formats.
+    const defaultFilename = (filenamePrefix || "") + sanitizedTitle + '.mp4';
+    // *** END OF CHANGE 2 ***
 
     const outputDir = path.join(__dirname, 'downloads');
     const finalOutput = path.join(outputDir, defaultFilename);
