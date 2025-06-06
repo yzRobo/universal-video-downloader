@@ -59,8 +59,8 @@ There are two ways to get started:
     Once the server is running, your terminal will display a confirmation message:
     ```
     ✅ Server is running on http://localhost:3000
-    Open this URL in your browser to use the downloader.
-    ```Add commentMore actions
+    Open this URL in your browser to use the downloader.```
+
     Open your favorite web browser and navigate to **http://localhost:3000**.
 
 ## 📖 How to Use the Interface
