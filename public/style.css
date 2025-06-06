@@ -1,0 +1,196 @@
+:root {
+    --bg-color: #1a1a1a;
+    --text-color: #e0e0e0;
+    --primary-color: #007bff;
+    --primary-hover: #0056b3;
+    --border-color: #444;
+    --card-bg: #2c2c2c;
+    --success-color: #28a745;
+    --error-color: #dc3545;
+    --info-color: #17a2b8;
+    --progress-bg: #444;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 2rem;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    background-color: var(--card-bg);
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+h1 {
+    text-align: center;
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+h2 {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.subtitle {
+    text-align: center;
+    color: #aaa;
+    margin-top: 0;
+    margin-bottom: 2rem;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+label {
+    margin-bottom: 0.5rem;
+    font-weight: bold;
+}
+
+input {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.75rem;
+    font-size: 1rem;
+    font-family: inherit;
+}
+
+button {
+    padding: 0.8rem 1.5rem;
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: #fff;
+    background-color: var(--primary-color);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+}
+
+button:hover:not(:disabled) {
+    background-color: var(--primary-hover);
+}
+
+button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+#submit-btn {
+    width: 100%;
+}
+
+#results-container {
+    margin-top: 2rem;
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
+}
+
+#log-output {
+    background-color: #111;
+    padding: 1rem;
+    border-radius: 4px;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 0.9rem;
+}
+
+.log-error { color: var(--error-color); }
+.log-success { color: var(--success-color); }
+.log-info { color: var(--info-color); }
+
+.hidden {
+    display: none;
+}
+
+/* Progress Bar Styling */
+#progress-bars h4 {
+    margin-top: 0;
+    color: #ccc;
+}
+.progress-bar-container { margin-bottom: 1rem; }
+.progress-bar-label { display: flex; justify-content: space-between; align-items: center; font-size: 0.9em; margin-bottom: 0.3rem; gap: 1rem; }
+.progress-bar-filename { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 1rem; }
+.progress-bar-details { color: #bbb; }
+.progress-bar-outer { background-color: var(--progress-bg); border-radius: 5px; overflow: hidden; height: 20px; }
+.progress-bar-inner { height: 100%; background-color: var(--primary-color); width: 0%; transition: width 0.2s linear; text-align: center; color: white; font-weight: bold; font-size: 0.8em; line-height: 20px; }
+.progress-bar-inner.complete { background-color: var(--success-color); }
+.progress-bar-inner.error { background-color: var(--error-color); }
+
+/* --- ADDED: New styles for speed and stats container --- */
+.progress-bar-stats {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-shrink: 0; /* Prevent this container from shrinking */
+}
+.progress-bar-speed {
+    font-weight: bold;
+    color: var(--info-color);
+    min-width: 90px; /* Prevents layout jump as text changes */
+    text-align: right;
+}
+
+/* Section Styling */
+.download-section { background-color: rgba(0,0,0,0.2); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; position: relative; transition: all 0.3s ease; }
+.download-section.active { border-color: var(--primary-color); box-shadow: 0 0 10px rgba(0, 123, 255, 0.5); }
+.section-title { margin-top: 0; color: #ccc; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 1rem; }
+
+#add-section-btn { width: auto; background-color: var(--info-color); padding: 0.6rem 1.2rem; font-size: 1rem; margin-bottom: 1rem; }
+#add-section-btn:hover:not(:disabled) { background-color: #138496; }
+.remove-section-btn { position: absolute; top: 1rem; right: 1rem; background-color: transparent; border: 1px solid var(--error-color); color: var(--error-color); padding: 0.2rem 0.6rem; font-size: 0.8rem; border-radius: 4px; cursor: pointer; }
+.remove-section-btn:hover:not(:disabled) { background-color: var(--error-color); color: white; }
+hr { border: none; border-top: 1px solid var(--border-color); margin: 1.5rem 0; }
+.subtle-hr { border: none; border-top: 1px solid #4a4a4a; margin: 1.5rem 0; }
+
+/* Video List Styling */
+.video-list-label { font-weight: bold; display: block; margin-bottom: 0.75rem; }
+.video-rows-container { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; }
+.video-row { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; gap: 0.75rem; }
+.video-row .video-url { flex-grow: 1; }
+.add-video-btn { background-color: transparent; border: 1px dashed var(--info-color); color: var(--info-color); padding: 0.4rem 1rem; font-size: 0.9rem; width: auto; }
+.add-video-btn:hover:not(:disabled) { background-color: rgba(23, 162, 184, 0.2); border-style: solid; }
+.remove-video-btn { background-color: #555; color: #ddd; border: none; border-radius: 50%; width: 28px; height: 28px; font-size: 1.5rem; line-height: 28px; padding: 0; text-align: center; cursor: pointer; flex-shrink: 0; }
+.remove-video-btn:hover:not(:disabled) { background-color: var(--error-color); color: white; }
+
+/* --- NEW STYLES FOR TOGGLE --- */
+
+/* Toggle Group Layout */
+.form-group-toggle { flex-direction: row; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+
+/* Hide domain fields when the section is public */
+.download-section.is-public .domain-fields-wrapper { display: none; }
+.download-section.is-public .video-row { grid-template-columns: 1fr auto; }
+
+/* Toggle Switch Styles */
+.toggle-switch { position: relative; display: inline-block; width: 140px; height: 34px; background-color: #333; border-radius: 34px; border: 1px solid var(--border-color); }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-switch label { position: absolute; top: 0; line-height: 34px; width: 50%; text-align: center; font-size: 0.9em; font-weight: bold; cursor: pointer; margin: 0; color: #999; transition: color 0.4s ease; }
+.toggle-switch label[for$="-private"] { left: 0; }
+.toggle-switch label[for$="-public"] { right: 0; }
+.toggle-switch .toggle-knob { position: absolute; top: 2px; left: 2px; width: calc(50% - 2px); height: 30px; background-color: var(--primary-color); border-radius: 34px; transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+
+/* Move knob and change active text color when checked */
+.toggle-switch input[value="private"]:checked ~ label[for$="-private"],
+.toggle-switch input[value="public"]:checked ~ label[for$="-public"] { color: white; }
+.toggle-switch input[value="public"]:checked ~ .toggle-knob { transform: translateX(95%); }
