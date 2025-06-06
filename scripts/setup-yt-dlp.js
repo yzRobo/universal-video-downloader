@@ -52,29 +52,36 @@ async function setupYtDlp() {
     }
 
     const platform = process.platform;
-    let ytDlpPath;
+    const arch = process.arch; // Get the architecture
+    const ytDlpPath = path.join(binDir, platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
     let downloadUrl;
+    let finalFilename = ytDlpPath;
+
 
     if (platform === 'win32') {
-        ytDlpPath = path.join(binDir, 'yt-dlp.exe');
-        downloadUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
+        // Check architecture to download the correct binary
+        if (arch === 'ia32') {
+            console.log('Detected 32-bit Windows. Configuring for 32-bit yt-dlp.');
+            downloadUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_x86.exe';
+        } else {
+            console.log('Detected 64-bit Windows. Configuring for 64-bit yt-dlp.');
+            downloadUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
+        }
     } else if (platform === 'darwin') {
-        ytDlpPath = path.join(binDir, 'yt-dlp');
         downloadUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos';
-    } else {
-        ytDlpPath = path.join(binDir, 'yt-dlp');
+    } else { // Assuming Linux
         downloadUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
     }
 
     // Check if yt-dlp already exists
     try {
-        await fs.access(ytDlpPath);
-        console.log('✓ yt-dlp already exists at:', ytDlpPath);
+        await fs.access(finalFilename);
+        console.log('✓ yt-dlp already exists at:', finalFilename);
         
         // Verify it's executable on Unix-like systems
         if (platform !== 'win32') {
             try {
-                await fs.chmod(ytDlpPath, 0o755);
+                await fs.chmod(finalFilename, 0o755);
                 console.log('✓ Made yt-dlp executable');
             } catch (err) {
                 console.error('Warning: Could not set executable permissions:', err.message);
@@ -87,19 +94,21 @@ async function setupYtDlp() {
     }
 
     try {
-        await downloadFile(downloadUrl, ytDlpPath);
-        
+        const tempPath = finalFilename + ".tmp"; // Download to a temporary file
+        await downloadFile(downloadUrl, tempPath);
+        await fs.rename(tempPath, finalFilename); // Rename to the final name
+
         // Make executable on Unix-like systems
         if (platform !== 'win32') {
-            await fs.chmod(ytDlpPath, 0o755);
+            await fs.chmod(finalFilename, 0o755);
             console.log('✓ Made yt-dlp executable');
         }
         
-        console.log('✓ yt-dlp downloaded successfully to:', ytDlpPath);
+        console.log('✓ yt-dlp downloaded successfully to:', finalFilename);
         
         // Test if yt-dlp works
         try {
-            const { stdout } = await execAsync(`"${ytDlpPath}" --version`);
+            const { stdout } = await execAsync(`"${finalFilename}" --version`);
             console.log('✓ yt-dlp version:', stdout.trim());
         } catch (testErr) {
             console.error('Warning: Could not verify yt-dlp installation:', testErr.message);
@@ -109,7 +118,8 @@ async function setupYtDlp() {
         console.log('\nManual installation instructions:');
         console.log('1. Go to: https://github.com/yt-dlp/yt-dlp/releases');
         console.log('2. Download the appropriate file for your system:');
-        console.log('   - Windows: yt-dlp.exe');
+        console.log('   - Windows (64-bit): yt-dlp.exe');
+        console.log('   - Windows (32-bit): yt-dlp_x86.exe (and rename to yt-dlp.exe)');
         console.log('   - macOS: yt-dlp_macos');
         console.log('   - Linux: yt-dlp');
         console.log(`3. Place it in: ${binDir}`);
