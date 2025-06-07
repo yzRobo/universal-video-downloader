@@ -1,45 +1,41 @@
 // server.js
-import { spawn } from "child_process";
-import fs from "fs";
-import path from "path";
-import axios from "axios";
-import { load } from "cheerio";
-import express from "express";
-import { createServer } from "http";
-import { Server } from "socket.io";
-import { fileURLToPath } from 'url';
-import ffmpeg from 'ffmpeg-static';
+const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
+const { load } = require("cheerio");
+const express = require("express");
+const { createServer } = require("http");
+const { Server } = require("socket.io");
 
 // --- Server Setup ---
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// In CommonJS, __dirname is a global variable, simplifying our setup.
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer);
 const PORT = 3000;
 
-// Setup yt-dlp path
+// --- Path Definitions for Binaries ---
+// This strategy works for BOTH development and the packaged .exe
 const platform = process.platform;
 const ytDlpPath = path.join(__dirname, 'bin', platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+const ffmpegPath = path.join(__dirname, 'bin', platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
 
+
+// =========================================================================
+//                  THE FINAL ATTEMPT - A NEW APPROACH
+// =========================================================================
 function spawnYtDlp(args, options = {}) {
     if (platform === 'win32') {
-
-        // We must carefully quote arguments that contain spaces.
         const quote = (str) => `"${str}"`;
         const quotedArgs = args.map(arg => arg.includes(' ') ? quote(arg) : arg);
-
-        // The command combines start /B with the executable and its arguments.
         const command = `start "" /B ${quote(ytDlpPath)} ${quotedArgs.join(' ')}`;
-
-        // We pass the command as a single string and use the shell: true option.
         return spawn(command, [], {
             ...options,
             shell: true,
             windowsHide: true
         });
     } else {
-        // For macOS and Linux, direct execution remains correct.
         return spawn(ytDlpPath, args, options);
     }
 }
@@ -277,14 +273,12 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
           socket.emit("log", { type: "error", message: `${logPrefix} No video info returned. ${errorOutput}` });
       }
 
-      // *** CHANGE 1 of 2: Sanitize the filename to prevent double extensions ***
       const sanitizedTitle = (videoDetails.title || 'Unknown')
-          .replace(/\.(mp4|mkv|webm|mov|avi|mp3|m4a)$/i, '') // Remove common media extensions
-          .replace(/[<>:"/\\|?*]/g, '_') // Replace illegal characters
+          .replace(/\.(mp4|mkv|webm|mov|avi|mp3|m4a)$/i, '')
+          .replace(/[<>:"/\\|?*]/g, '_')
           .trim();
       
       let filename = (filenamePrefix || "") + sanitizedTitle;
-      // *** END OF CHANGE 1 ***
 
       const ytDlpArgs = [];
       
@@ -317,9 +311,7 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
           videoInfo.url
       );
 
-      if (ffmpeg) {
-          ytDlpArgs.push('--ffmpeg-location', ffmpeg);
-      }
+      ytDlpArgs.push('--ffmpeg-location', ffmpegPath);
 
       socket.emit("progress", {
           index: index, percentage: 0, status: "⇣ Starting download", size: "0 MB",
@@ -410,16 +402,13 @@ async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix
     
     const stream = playerConfig.streamUrl;
 
-    // *** CHANGE 2 of 2: Sanitize the filename to prevent double extensions ***
     const sanitizedTitle = playerConfig.title
-        .replace(/\.(mp4|mkv|webm|mov|avi)$/i, '') // Remove common video extensions
-        .replace(/\s+on Vimeo$/i, "")              // Remove " on Vimeo" suffix
-        .trim()                                    // Trim whitespace
-        .replace(/[<>:"/\\|?*]/g, '_');           // Replace illegal filename characters
+        .replace(/\.(mp4|mkv|webm|mov|avi)$/i, '')
+        .replace(/\s+on Vimeo$/i, "")
+        .trim()
+        .replace(/[<>:"/\\|?*]/g, '_');
     
-    // Always create a base .mp4 filename. downloadHLSStream will adjust for other formats.
     const defaultFilename = (filenamePrefix || "") + sanitizedTitle + '.mp4';
-    // *** END OF CHANGE 2 ***
 
     const outputDir = path.join(__dirname, 'downloads');
     const finalOutput = path.join(outputDir, defaultFilename);
@@ -509,7 +498,7 @@ async function downloadHLSStream(m3u8Url, outputFilename, duration, format, reso
     console.warn("Could not remove existing file:", e.message);
   }
 
-  activeProcess = spawn(ffmpeg, ffmpegArgs);
+  activeProcess = spawn(ffmpegPath, ffmpegArgs);
 
   activeProcess.on("close", (code) => {
     activeProcess = null;
