@@ -207,6 +207,11 @@ if (isPkg) {
         res.send(fs.readFileSync(path.join(__dirname, 'public', 'style.css'), 'utf8'));
     });
     
+    app.get('/socket.io.min.js', (req, res) => {
+        res.type('application/javascript');
+        res.send(fs.readFileSync(path.join(__dirname, 'public', 'socket.io.min.js'), 'utf8'));
+    });
+    
     app.get('/client.js', (req, res) => {
         res.type('application/javascript');
         res.send(fs.readFileSync(path.join(__dirname, 'public', 'client.js'), 'utf8'));
