@@ -1,6 +1,6 @@
 {
   "name": "universal-video-downloader",
-  "version": "3.0.0-beta.2",
+  "version": "3.0.0",
   "description": "A self-hosted, portable, web interface for downloading video and audio from YouTube, Vimeo, Twitter, and other social websites.",
   "main": "server.js",
   "bin": "server.js",
