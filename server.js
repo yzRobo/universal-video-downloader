@@ -483,64 +483,66 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
           .replace(/[<>:"/\\|?*]/g, '_')
           .trim();
       
-      let filename = (filenamePrefix || "") + sanitizedTitle;
+      // This base filename is for the UI progress bar, representing the whole post.
+      let uiFilename = (filenamePrefix || "") + sanitizedTitle;
 
       // Construct yt-dlp arguments
       const ytDlpArgs = [];
       
-      // Add referer if domain is provided
       if (videoInfo.domain) {
           ytDlpArgs.push('--referer', videoInfo.domain);
       }
 
-      // Format selection based on user choice
       switch (format) {
           case 'audio-mp3':
               ytDlpArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
-              filename += '.mp3';
+              uiFilename += '.mp3';
               break;
           case 'audio-m4a':
               ytDlpArgs.push('-x', '--audio-format', 'm4a', '--audio-quality', '0');
-              filename += '.m4a';
+              uiFilename += '.m4a';
               break;
           case 'video-only':
               ytDlpArgs.push('-f', 'bestvideo[ext=mp4]/bestvideo', '--merge-output-format', 'mp4');
-              filename += '_No_Audio.mp4';
+              uiFilename += '_No_Audio.mp4';
               break;
           case 'video-audio':
           default:
-              // Ensure best quality video+audio merge
               ytDlpArgs.push(
-                  '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio',
+                  '-f', 'bestvideo+bestaudio/best',
                   '--merge-output-format', 'mp4'
               );
-              // Add useful metadata options
               ytDlpArgs.push('--embed-subs', '--embed-thumbnail', '--add-metadata');
-              filename += '.mp4';
+              uiFilename += '.mp4';
               break;
       }
 
-      // Build the full output path
-      const outputPath = path.join(outputDir, filename);
+      // Create a dynamic output TEMPLATE for yt-dlp.
+      // This allows it to create a unique file for each item in a carousel.
+      // e.g., "01.1_Video 1.mp4", "01.1_Video 2.mp4", etc.
+      const outputTemplate = path.join(outputDir, `${filenamePrefix}%(title)s.%(ext)s`);
 
       // Add common arguments
       ytDlpArgs.push(
+          '--output', outputTemplate,
           '--no-warnings',
           '--progress',
-          '--newline',
-          '--no-playlist',
-          '--output', outputPath  // Output path as a single argument
+          '--newline'
       );
       
-      // Add ffmpeg location if it exists
+      // Conditionally allow multi-file downloads ONLY for Instagram carousels
+      if (platform === 'instagram') {
+          socket.emit("log", { type: "info", message: `${logPrefix} Instagram post detected. Multi-video download enabled.` });
+      } else {
+          ytDlpArgs.push('--no-playlist');
+      }
+          
       if (fs.existsSync(ffmpegPath)) {
           ytDlpArgs.push('--ffmpeg-location', ffmpegPath);
       }
       
-      // Add URL at the very end
       ytDlpArgs.push(videoInfo.url);
       
-      // Log the command for debugging (with properly quoted paths for display)
       const displayCommand = ytDlpArgs.map(arg => 
           arg.includes(' ') || arg.includes('\\') ? `"${arg}"` : arg
       ).join(' ');
@@ -548,7 +550,7 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
 
       socket.emit("progress", {
           index: index, percentage: 0, status: "⇣ Starting download", size: "0 MB",
-          duration: "00:00:00", filename: filename, speed: "..."
+          duration: "00:00:00", filename: uiFilename, speed: "..."
       });
 
       activeProcess = spawnYtDlp(ytDlpArgs);
@@ -605,23 +607,20 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
       
       if (isCancelled) {
           socket.emit("progress", { index: index, status: `🛑 Cancelled` });
-      } else if (downloadCode === 0) {
-          const finalPath = path.join(outputDir, filename);
-          if (fs.existsSync(finalPath)) {
-              const fileSize = formatBytes(fs.statSync(finalPath).size);
-              socket.emit("progress", { 
-                  index: index, percentage: 100, status: "✅ Downloaded",
-                  size: fileSize
-              });
-              socket.emit("log", { type: 'success', message: `${logPrefix} Successfully downloaded: ${filename} (${fileSize})` });
-          } else {
-              socket.emit("log", { type: 'error', message: `${logPrefix} Download completed but file not found: ${filename}` });
-              socket.emit("progress", { index: index, status: `❌ Error: File not found` });
-          }
-      } else {
-          socket.emit("progress", { index: index, status: `❌ Error (code ${downloadCode})` });
-          socket.emit("log", { type: 'error', message: `${logPrefix} yt-dlp exited with error code ${downloadCode}` });
-      }
+        } else if (downloadCode === 0) {
+            // Since we can have multiple files from a carousel, we no longer check for a single path.
+            // An exit code of 0 from yt-dlp is our indicator of success.
+            socket.emit("progress", {
+                index: index,
+                percentage: 100,
+                status: "✅ Downloaded"
+                // We can't easily get the final size of all combined files, so we omit it here.
+            });
+            socket.emit("log", { type: 'success', message: `${logPrefix} Successfully downloaded all videos from the post.` });
+        } else {
+            socket.emit("progress", { index: index, status: `❌ Error (code ${downloadCode})` });
+            socket.emit("log", { type: 'error', message: `${logPrefix} yt-dlp exited with error code ${downloadCode}` });
+        }
   } catch (error) {
     if (isCancelled) return;
     const errorMsg = `${logPrefix} Failed to download video: ${error.message}`;
