@@ -1,15 +1,12 @@
 // scripts/setup-yt-dlp.js
-import { promises as fs } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { createWriteStream } from 'fs';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import axios from 'axios'; // Use the robust axios library for downloads
+const { promises: fs } = require('fs');
+const path = require('path');
+const { createWriteStream } = require('fs');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const axios = require('axios'); // Use the robust axios library for downloads
 
 const execAsync = promisify(exec);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // --- CONFIGURATION ---
 const EXECUTABLE_NAME = 'yt-dlp';
@@ -24,7 +21,6 @@ const DOWNLOAD_URL_LINUX = `https://github.com/yt-dlp/yt-dlp/releases/latest/dow
 async function downloadFile(url, dest) {
     console.log(`Attempting to download from: ${url}`);
     
-    // Use Axios to handle the download. It follows redirects automatically.
     const { data } = await axios({
         url,
         method: 'GET',

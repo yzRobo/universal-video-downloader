@@ -3,10 +3,11 @@
   "version": "3.0.0-alpha.1",
   "description": "A self-hosted, portable, web interface for downloading video and audio from YouTube, Vimeo, Twitter, and other social websites.",
   "main": "server.js",
-  "type": "module",
+  "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "postinstall": "node scripts/setup-yt-dlp.js"
+    "postinstall": "node scripts/setup-yt-dlp.js",
+    "build": "pkg . --targets node18-win-x64 --output UniversalVideoDownloader.exe"
   },
   "author": "",
   "license": "MIT",
@@ -16,5 +17,11 @@
     "express": "^4.19.2",
     "ffmpeg-static": "^5.2.0",
     "socket.io": "^4.7.5"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*",
+      "bin/**/*"
+    ]
   }
 }
