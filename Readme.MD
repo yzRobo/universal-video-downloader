@@ -1,9 +1,3 @@
-### Updated README.md
-
-Here is a completely rewritten README that reflects all the amazing new changes. It focuses on the new, simple EXE-based workflow for regular users while still providing instructions for developers.
-
----
-
 # Universal Video Downloader
 
 A self-hosted, incredibly simple, and powerful web interface for downloading video and audio from YouTube, Vimeo, Twitter, and 1000+ other websites.
