@@ -26,18 +26,25 @@ const ffmpegPath = path.join(__dirname, 'bin', platform === 'win32' ? 'ffmpeg.ex
 //                  THE FINAL ATTEMPT - A NEW APPROACH
 // =========================================================================
 function spawnYtDlp(args, options = {}) {
-    if (platform === 'win32') {
-        const quote = (str) => `"${str}"`;
-        const quotedArgs = args.map(arg => arg.includes(' ') ? quote(arg) : arg);
-        const command = `start "" /B ${quote(ytDlpPath)} ${quotedArgs.join(' ')}`;
-        return spawn(command, [], {
-            ...options,
-            shell: true,
-            windowsHide: true
-        });
-    } else {
-        return spawn(ytDlpPath, args, options);
-    }
+  // Ensure all arguments are properly formatted strings
+  const cleanArgs = args.map(arg => String(arg));
+  
+  if (platform === 'win32') {
+      // On Windows, use spawn directly without shell
+      return spawn(ytDlpPath, cleanArgs, {
+          ...options,
+          windowsHide: true,
+          shell: false,
+          stdio: options.stdio || 'pipe'
+      });
+  } else {
+      // On Unix-like systems
+      return spawn(ytDlpPath, cleanArgs, {
+          ...options,
+          shell: false,
+          stdio: options.stdio || 'pipe'
+      });
+  }
 }
 
 
@@ -47,18 +54,43 @@ async function checkYtDlp() {
       await fs.promises.access(ytDlpPath, fs.constants.F_OK);
       console.log('✓ yt-dlp found at:', ytDlpPath);
       
-      const testProcess = spawnYtDlp(['--version']);
+      // Check if file is readable
+      try {
+          await fs.promises.access(ytDlpPath, fs.constants.R_OK);
+      } catch (err) {
+          console.error('✗ yt-dlp exists but is not readable. Check file permissions.');
+          return false;
+      }
+      
+      // For Windows, check if file is blocked
+      if (platform === 'win32') {
+          const stats = await fs.promises.stat(ytDlpPath);
+          if (stats.size < 1000000) { // yt-dlp should be at least 1MB
+              console.error('✗ yt-dlp file seems corrupted (too small)');
+              return false;
+          }
+      }
+      
+      // Try to execute
+      const testProcess = spawn(ytDlpPath, ['--version'], {
+          windowsHide: true,
+          shell: false
+      });
       
       let output = '';
-      testProcess.stdout.on('data', (data) => output += data.toString());
-      
       let errorOutput = '';
+      
+      testProcess.stdout.on('data', (data) => output += data.toString());
       testProcess.stderr.on('data', (data) => errorOutput += data.toString());
       
       const code = await new Promise((resolve) => {
           testProcess.on('close', (code) => resolve(code));
           testProcess.on('error', (err) => {
               console.error('✗ Error testing yt-dlp:', err.message);
+              if (err.code === 'EACCES') {
+                  console.error('Permission denied. The file might be blocked by Windows security.');
+                  console.error('Try: Right-click on', ytDlpPath, '→ Properties → Unblock');
+              }
               resolve(1);
           });
       });
@@ -68,7 +100,9 @@ async function checkYtDlp() {
           return true;
       } else {
           console.error(`✗ yt-dlp test failed with exit code: ${code}`);
-          console.error(`Stderr: ${errorOutput}`);
+          if (errorOutput) {
+              console.error(`Stderr: ${errorOutput}`);
+          }
           return false;
       }
   } catch (err) {
@@ -216,6 +250,14 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
       return;
   }
   
+  // Check if ffmpeg exists
+  try {
+      await fs.promises.access(ffmpegPath, fs.constants.F_OK);
+      socket.emit("log", { type: "info", message: `${logPrefix} FFmpeg found at: ${ffmpegPath}` });
+  } catch (err) {
+      socket.emit("log", { type: "warning", message: `${logPrefix} FFmpeg not found at: ${ffmpegPath}. Trying system ffmpeg...` });
+  }
+  
   socket.emit("log", { type: "info", message: `${logPrefix} Downloading from ${platform} using yt-dlp: ${videoInfo.url}` });
 
   try {
@@ -280,12 +322,15 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
       
       let filename = (filenamePrefix || "") + sanitizedTitle;
 
+      // Construct yt-dlp arguments
       const ytDlpArgs = [];
       
+      // Add referer if domain is provided
       if (videoInfo.domain) {
           ytDlpArgs.push('--referer', videoInfo.domain);
       }
 
+      // Format selection based on user choice
       switch (format) {
           case 'audio-mp3':
               ytDlpArgs.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
@@ -296,22 +341,48 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
               filename += '.m4a';
               break;
           case 'video-only':
-              ytDlpArgs.push('-f', 'bestvideo', '--merge-output-format', 'mp4');
+              ytDlpArgs.push('-f', 'bestvideo[ext=mp4]/bestvideo', '--merge-output-format', 'mp4');
               filename += '_No_Audio.mp4';
               break;
+          case 'video-audio':
           default:
-              ytDlpArgs.push('-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4');
+              // Ensure best quality video+audio merge
+              ytDlpArgs.push(
+                  '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio',
+                  '--merge-output-format', 'mp4'
+                  // Removed --recode-video as it's causing issues
+              );
+              // Add useful metadata options
+              ytDlpArgs.push('--embed-subs', '--embed-thumbnail', '--add-metadata');
               filename += '.mp4';
               break;
       }
 
-      ytDlpArgs.push(
-          '--no-warnings', '--progress', '--newline', '--no-playlist',
-          `--output`, `${path.join(outputDir, filename)}`,
-          videoInfo.url
-      );
+      // Build the full output path
+      const outputPath = path.join(outputDir, filename);
 
-      ytDlpArgs.push('--ffmpeg-location', ffmpegPath);
+      // Add common arguments
+      ytDlpArgs.push(
+          '--no-warnings',
+          '--progress',
+          '--newline',
+          '--no-playlist',
+          '--output', outputPath  // Output path as a single argument
+      );
+      
+      // Add ffmpeg location if it exists
+      if (fs.existsSync(ffmpegPath)) {
+          ytDlpArgs.push('--ffmpeg-location', ffmpegPath);
+      }
+            
+      // Add URL at the very end
+      ytDlpArgs.push(videoInfo.url);
+      
+      // Log the command for debugging (with properly quoted paths for display)
+      const displayCommand = ytDlpArgs.map(arg => 
+          arg.includes(' ') || arg.includes('\\') ? `"${arg}"` : arg
+      ).join(' ');
+      socket.emit("log", { type: "info", message: `${logPrefix} Running: yt-dlp ${displayCommand}` });
 
       socket.emit("progress", {
           index: index, percentage: 0, status: "⇣ Starting download", size: "0 MB",
@@ -321,9 +392,16 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
       activeProcess = spawnYtDlp(ytDlpArgs);
       
       let lastPercent = 0;
+      let isPostProcessing = false;
       
       activeProcess.stdout.on('data', (data) => {
           const output = data.toString();
+          
+          // Log all output for debugging
+          if (output.trim()) {
+              socket.emit("log", { type: "info", message: `${logPrefix} yt-dlp output: ${output.trim()}` });
+          }
+          
           const percentMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
           const speedMatch = output.match(/at\s+([\d.]+\w+\/s)/);
           const sizeMatch = output.match(/of\s+([\d.]+\w+)/);
@@ -339,8 +417,16 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
               });
           }
           
-          if (output.includes('[Merger]') || output.includes('[ExtractAudio]')) {
-              socket.emit("progress", { index: index, percentage: lastPercent, status: "🔄 Processing media..." });
+          // Check for merging/post-processing messages
+          if (output.includes('[Merger]') || output.includes('[ExtractAudio]') || 
+              output.includes('[ffmpeg]') || output.includes('[EmbedThumbnail]')) {
+              isPostProcessing = true;
+              socket.emit("progress", { index: index, percentage: lastPercent, status: "🔄 Merging video and audio..." });
+              socket.emit("log", { type: "info", message: `${logPrefix} Post-processing: ${output.trim()}` });
+          }
+          
+          if (output.includes('Deleting original file')) {
+              socket.emit("progress", { index: index, percentage: 99, status: "🔄 Finalizing..." });
           }
       });
 
@@ -363,13 +449,21 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
       if (isCancelled) {
           socket.emit("progress", { index: index, status: `🛑 Cancelled` });
       } else if (downloadCode === 0) {
-          socket.emit("progress", { 
-              index: index, percentage: 100, status: "✅ Downloaded",
-              size: fs.existsSync(path.join(outputDir, filename)) ? formatBytes(fs.statSync(path.join(outputDir, filename)).size) : "Unknown"
-          });
-          socket.emit("log", { type: 'success', message: `${logPrefix} Successfully downloaded: ${filename}` });
+          const finalPath = path.join(outputDir, filename);
+          if (fs.existsSync(finalPath)) {
+              const fileSize = formatBytes(fs.statSync(finalPath).size);
+              socket.emit("progress", { 
+                  index: index, percentage: 100, status: "✅ Downloaded",
+                  size: fileSize
+              });
+              socket.emit("log", { type: 'success', message: `${logPrefix} Successfully downloaded: ${filename} (${fileSize})` });
+          } else {
+              socket.emit("log", { type: 'error', message: `${logPrefix} Download completed but file not found: ${filename}` });
+              socket.emit("progress", { index: index, status: `❌ Error: File not found` });
+          }
       } else {
           socket.emit("progress", { index: index, status: `❌ Error (code ${downloadCode})` });
+          socket.emit("log", { type: 'error', message: `${logPrefix} yt-dlp exited with error code ${downloadCode}` });
       }
   } catch (error) {
     if (isCancelled) return;
