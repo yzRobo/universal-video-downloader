@@ -7,21 +7,38 @@
   "scripts": {
     "start": "node server.js",
     "postinstall": "node scripts/setup-yt-dlp.js",
-    "build": "pkg . --targets node18-win-x64 --output UniversalVideoDownloader.exe"
+    "build": "node scripts/build-exe.js",
+    "build-direct": "pkg . --targets node18-win-x64 --output dist/UniversalVideoDownloader.exe"
   },
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "axios": "^1.7.2",
+    "axios": "1.6.7",
     "cheerio": "^1.0.0-rc.12",
     "express": "^4.19.2",
     "ffmpeg-static": "^5.2.0",
     "socket.io": "^4.7.5"
   },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
   "pkg": {
     "assets": [
       "public/**/*",
-      "bin/**/*"
-    ]
-  }
+      "index.html"
+    ],
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "dist",
+    "compress": "GZip"
+  },
+  "files": [
+    "server.js",
+    "index.html",
+    "public/**/*",
+    "bin/**/*",
+    "scripts/**/*",
+    "downloads/.gitkeep"
+  ]
 }

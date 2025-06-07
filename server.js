@@ -1,123 +1,227 @@
 // server.js
+
+if (typeof process.pkg !== 'undefined') {
+  const Module = require('module');
+  const originalResolveFilename = Module._resolveFilename;
+  
+  Module._resolveFilename = function (request, parent, isMain) {
+      // Handle axios special case
+      if (request === 'axios' || request.includes('axios/dist/node/axios.cjs')) {
+          try {
+              // Try to resolve axios from the bundled modules
+              return originalResolveFilename.call(this, 'axios', parent, isMain);
+          } catch (e) {
+              // If that fails, try the index.js directly
+              try {
+                  return originalResolveFilename.call(this, 'axios/index.js', parent, isMain);
+              } catch (e2) {
+                  // Last resort - try lib/axios.js
+                  return originalResolveFilename.call(this, 'axios/lib/axios.js', parent, isMain);
+              }
+          }
+      }
+      return originalResolveFilename.call(this, request, parent, isMain);
+  };
+}
+
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const axios = require("axios");
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { load } = require("cheerio");
 const express = require("express");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 
+// Function to open browser
+function openBrowser(url) {
+  const { exec } = require('child_process');
+  
+  switch (process.platform) {
+      case 'win32':
+          exec(`start ${url}`);
+          break;
+      case 'darwin':
+          exec(`open ${url}`);
+          break;
+      default:
+          // Linux/Unix
+          exec(`xdg-open ${url}`);
+  }
+}
+
+// Function to check if port is in use
+function checkPort(port) {
+  return new Promise((resolve) => {
+      const testServer = require('net').createServer();
+      
+      testServer.once('error', (err) => {
+          if (err.code === 'EADDRINUSE') {
+              resolve(false); // Port is in use
+          } else {
+              resolve(false); // Some other error
+          }
+      });
+      
+      testServer.once('listening', () => {
+          testServer.close();
+          resolve(true); // Port is available
+      });
+      
+      testServer.listen(port);
+  });
+}
+
 // --- Server Setup ---
-// In CommonJS, __dirname is a global variable, simplifying our setup.
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer);
 const PORT = 3000;
 
-// --- Path Definitions for Binaries ---
-// This strategy works for BOTH development and the packaged .exe
-const platform = process.platform;
-const ytDlpPath = path.join(__dirname, 'bin', platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-const ffmpegPath = path.join(__dirname, 'bin', platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+// Detect if running as a pkg executable
+const isPkg = typeof process.pkg !== 'undefined';
 
+// Get the correct base directory
+const getBasePath = () => {
+    if (isPkg) {
+        // When running as exe, use the exe's directory
+        return path.dirname(process.execPath);
+    } else {
+        // When running with node, use __dirname
+        return __dirname;
+    }
+};
+
+const basePath = getBasePath();
+
+// --- Path Definitions for Binaries ---
+const platform = process.platform;
+const ytDlpPath = path.join(basePath, 'bin', platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+const ffmpegPath = path.join(basePath, 'bin', platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+
+// Also update the downloads directory path
+const getDownloadsDir = () => path.join(basePath, 'downloads');
+
+// Log the paths for debugging
+console.log('Running as pkg:', isPkg);
+console.log('Base path:', basePath);
+console.log('yt-dlp path:', ytDlpPath);
+console.log('ffmpeg path:', ffmpegPath);
 
 // =========================================================================
-//                  THE FINAL ATTEMPT - A NEW APPROACH
+//                  SPAWN FUNCTION
 // =========================================================================
 function spawnYtDlp(args, options = {}) {
-  // Ensure all arguments are properly formatted strings
-  const cleanArgs = args.map(arg => String(arg));
-  
-  if (platform === 'win32') {
-      // On Windows, use spawn directly without shell
-      return spawn(ytDlpPath, cleanArgs, {
-          ...options,
-          windowsHide: true,
-          shell: false,
-          stdio: options.stdio || 'pipe'
-      });
-  } else {
-      // On Unix-like systems
-      return spawn(ytDlpPath, cleanArgs, {
-          ...options,
-          shell: false,
-          stdio: options.stdio || 'pipe'
-      });
-  }
+    // Ensure all arguments are properly formatted strings
+    const cleanArgs = args.map(arg => String(arg));
+    
+    if (platform === 'win32') {
+        // On Windows, use spawn directly without shell
+        return spawn(ytDlpPath, cleanArgs, {
+            ...options,
+            windowsHide: true,
+            shell: false,
+            stdio: options.stdio || 'pipe'
+        });
+    } else {
+        // On Unix-like systems
+        return spawn(ytDlpPath, cleanArgs, {
+            ...options,
+            shell: false,
+            stdio: options.stdio || 'pipe'
+        });
+    }
 }
-
 
 // Check if yt-dlp exists on startup
 async function checkYtDlp() {
-  try {
-      await fs.promises.access(ytDlpPath, fs.constants.F_OK);
-      console.log('✓ yt-dlp found at:', ytDlpPath);
-      
-      // Check if file is readable
-      try {
-          await fs.promises.access(ytDlpPath, fs.constants.R_OK);
-      } catch (err) {
-          console.error('✗ yt-dlp exists but is not readable. Check file permissions.');
-          return false;
-      }
-      
-      // For Windows, check if file is blocked
-      if (platform === 'win32') {
-          const stats = await fs.promises.stat(ytDlpPath);
-          if (stats.size < 1000000) { // yt-dlp should be at least 1MB
-              console.error('✗ yt-dlp file seems corrupted (too small)');
-              return false;
-          }
-      }
-      
-      // Try to execute
-      const testProcess = spawn(ytDlpPath, ['--version'], {
-          windowsHide: true,
-          shell: false
-      });
-      
-      let output = '';
-      let errorOutput = '';
-      
-      testProcess.stdout.on('data', (data) => output += data.toString());
-      testProcess.stderr.on('data', (data) => errorOutput += data.toString());
-      
-      const code = await new Promise((resolve) => {
-          testProcess.on('close', (code) => resolve(code));
-          testProcess.on('error', (err) => {
-              console.error('✗ Error testing yt-dlp:', err.message);
-              if (err.code === 'EACCES') {
-                  console.error('Permission denied. The file might be blocked by Windows security.');
-                  console.error('Try: Right-click on', ytDlpPath, '→ Properties → Unblock');
-              }
-              resolve(1);
-          });
-      });
-      
-      if (code === 0) {
-          console.log('✓ yt-dlp version:', output.trim() || '(No version output)');
-          return true;
-      } else {
-          console.error(`✗ yt-dlp test failed with exit code: ${code}`);
-          if (errorOutput) {
-              console.error(`Stderr: ${errorOutput}`);
-          }
-          return false;
-      }
-  } catch (err) {
-      console.error('✗ yt-dlp not found at:', ytDlpPath);
-      return false;
-  }
+    try {
+        await fs.promises.access(ytDlpPath, fs.constants.F_OK);
+        console.log('✓ yt-dlp found at:', ytDlpPath);
+        
+        // Check if file is readable
+        try {
+            await fs.promises.access(ytDlpPath, fs.constants.R_OK);
+        } catch (err) {
+            console.error('✗ yt-dlp exists but is not readable. Check file permissions.');
+            return false;
+        }
+        
+        // For Windows, check if file is blocked
+        if (platform === 'win32') {
+            const stats = await fs.promises.stat(ytDlpPath);
+            if (stats.size < 1000000) { // yt-dlp should be at least 1MB
+                console.error('✗ yt-dlp file seems corrupted (too small)');
+                return false;
+            }
+        }
+        
+        // Try to execute
+        const testProcess = spawn(ytDlpPath, ['--version'], {
+            windowsHide: true,
+            shell: false
+        });
+        
+        let output = '';
+        let errorOutput = '';
+        
+        testProcess.stdout.on('data', (data) => output += data.toString());
+        testProcess.stderr.on('data', (data) => errorOutput += data.toString());
+        
+        const code = await new Promise((resolve) => {
+            testProcess.on('close', (code) => resolve(code));
+            testProcess.on('error', (err) => {
+                console.error('✗ Error testing yt-dlp:', err.message);
+                if (err.code === 'EACCES') {
+                    console.error('Permission denied. The file might be blocked by Windows security.');
+                    console.error('Try: Right-click on', ytDlpPath, '→ Properties → Unblock');
+                }
+                resolve(1);
+            });
+        });
+        
+        if (code === 0) {
+            console.log('✓ yt-dlp version:', output.trim() || '(No version output)');
+            return true;
+        } else {
+            console.error(`✗ yt-dlp test failed with exit code: ${code}`);
+            if (errorOutput) {
+                console.error(`Stderr: ${errorOutput}`);
+            }
+            return false;
+        }
+    } catch (err) {
+        console.error('✗ yt-dlp not found at:', ytDlpPath);
+        return false;
+    }
 }
 
 // Check yt-dlp on startup
 checkYtDlp();
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
+// For serving static files when running as pkg
+if (isPkg) {
+    // When running as exe, we need to handle static files differently
+    app.get('/style.css', (req, res) => {
+        res.type('text/css');
+        res.send(fs.readFileSync(path.join(__dirname, 'public', 'style.css'), 'utf8'));
+    });
+    
+    app.get('/client.js', (req, res) => {
+        res.type('application/javascript');
+        res.send(fs.readFileSync(path.join(__dirname, 'public', 'client.js'), 'utf8'));
+    });
+    
+    app.get('/', (req, res) => {
+        res.send(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'));
+    });
+} else {
+    // Normal development mode
+    app.use(express.static(path.join(__dirname, 'public')));
+    app.get('/', (req, res) => {
+        res.sendFile(path.join(__dirname, 'index.html'));
+    });
+}
 
 // --- Module-level variables to handle cancellation ---
 let isCancelled = false;
@@ -161,10 +265,64 @@ io.on("connection", (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`✅ Server is running on http://localhost:${PORT}`);
-  console.log("Open this URL in your browser to use the downloader.");
+// =========================================================================
+//                  ENHANCED SERVER STARTUP
+// =========================================================================
+async function startServer() {
+    let port = PORT;
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    // Try to find an available port
+    while (attempts < maxAttempts) {
+        const isAvailable = await checkPort(port);
+        
+        if (isAvailable) {
+            // Start the server
+            httpServer.listen(port, () => {
+                const url = `http://localhost:${port}`;
+                console.log(`✅ Server is running on ${url}`);
+                
+                if (isPkg) {
+                    console.log("Opening your browser...");
+                    console.log("\nTo stop the server, close this window.");
+                    
+                    // Open browser after a short delay to ensure server is ready
+                    setTimeout(() => {
+                        openBrowser(url);
+                    }, 1000);
+                } else {
+                    console.log("Open this URL in your browser to use the downloader.");
+                }
+            });
+            return; // Exit function on success
+        } else {
+            console.log(`Port ${port} is in use, trying ${port + 1}...`);
+            port++;
+            attempts++;
+        }
+    }
+    
+    if (attempts >= maxAttempts) {
+        console.error('❌ Could not find an available port. Please close other applications and try again.');
+        if (isPkg) {
+            console.log('\nPress any key to exit...');
+            process.stdin.resume();
+            process.stdin.on('data', process.exit);
+        }
+    }
+}
+
+// Start the server
+startServer().catch(err => {
+    console.error('Failed to start server:', err);
+    if (isPkg) {
+        console.log('\nPress any key to exit...');
+        process.stdin.resume();
+        process.stdin.on('data', process.exit);
+    }
 });
+
 
 // =========================================================================
 //                  MAIN BATCH PROCESSING LOGIC
@@ -261,7 +419,7 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
   socket.emit("log", { type: "info", message: `${logPrefix} Downloading from ${platform} using yt-dlp: ${videoInfo.url}` });
 
   try {
-      const outputDir = path.join(__dirname, 'downloads');
+      const outputDir = getDownloadsDir();
       if (!fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
       }
@@ -350,7 +508,6 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
               ytDlpArgs.push(
                   '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio',
                   '--merge-output-format', 'mp4'
-                  // Removed --recode-video as it's causing issues
               );
               // Add useful metadata options
               ytDlpArgs.push('--embed-subs', '--embed-thumbnail', '--add-metadata');
@@ -374,7 +531,7 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
       if (fs.existsSync(ffmpegPath)) {
           ytDlpArgs.push('--ffmpeg-location', ffmpegPath);
       }
-            
+      
       // Add URL at the very end
       ytDlpArgs.push(videoInfo.url);
       
@@ -396,11 +553,6 @@ async function downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format
       
       activeProcess.stdout.on('data', (data) => {
           const output = data.toString();
-          
-          // Log all output for debugging
-          if (output.trim()) {
-              socket.emit("log", { type: "info", message: `${logPrefix} yt-dlp output: ${output.trim()}` });
-          }
           
           const percentMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
           const speedMatch = output.match(/at\s+([\d.]+\w+\/s)/);
@@ -504,7 +656,7 @@ async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix
     
     const defaultFilename = (filenamePrefix || "") + sanitizedTitle + '.mp4';
 
-    const outputDir = path.join(__dirname, 'downloads');
+    const outputDir = getDownloadsDir();
     const finalOutput = path.join(outputDir, defaultFilename);
     
     await new Promise((resolve) => {
@@ -521,12 +673,18 @@ async function downloadVimeoPrivateVideo(videoInfo, index, total, filenamePrefix
 
 async function extractVimeoPlayerConfig(url, domain, pre, socket) {
   try {
-    const response = await axios.get(url, {
-      headers: { Referer: domain, "User-Agent": "Mozilla/5.0" },
+    const response = await fetch(url, {
+      headers: { 
+        'Referer': domain, 
+        'User-Agent': 'Mozilla/5.0'
+      },
     });
-    if (!response) throw new Error("No response from Vimeo");
-
-    const $ = load(response.data);
+    
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    
+    const responseText = await response.text();
+    const $ = load(responseText);
+    
     const scriptTag = $("script").filter((i, el) => $(el).html().includes("window.playerConfig =")).first();
     const playerConfigString = scriptTag.html().replace("window.playerConfig = ", "").replace(/;$/, "");
     const playerConfig = JSON.parse(playerConfigString);
@@ -540,12 +698,28 @@ async function extractVimeoPlayerConfig(url, domain, pre, socket) {
     if (isCancelled) return null;
     const errorMsg = `${pre} Error extracting Vimeo player config: ${error.message}`;
     socket.emit("log", { type: "error", message: errorMsg });
-    if (error?.response?.headers?.["set-cookie"]) {
-      axios.defaults.headers.common["Cookie"] = error.response.headers["set-cookie"].join("; ");
-      socket.emit("log", { type: "info", message: `${pre} Video Security Error... Trying again with new cookies...`});
-    }
+    
+    // Note: Cookie handling would need to be done differently with fetch
+    socket.emit("log", { type: "info", message: `${pre} Video Security Error... Trying again...`});
+    
     return null;
   }
+}
+
+// 3. Update the downloadFile function in setup-yt-dlp.js:
+async function downloadFile(url, dest) {
+    console.log(`Attempting to download from: ${url}`);
+    
+    const response = await fetch(url, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+        }
+    });
+    
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    
+    const buffer = await response.buffer();
+    await fs.promises.writeFile(dest, buffer);
 }
 
 async function downloadHLSStream(m3u8Url, outputFilename, duration, format, resolve, pre, socket, videoIndex) {
