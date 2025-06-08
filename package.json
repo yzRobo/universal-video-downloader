@@ -6,6 +6,9 @@
   "bin": "server.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "concurrently \"nodemon server.js\" \"npm run watch:css\"",
+    "dev:server": "nodemon server.js",
+    "watch:css": "chokidar \"public/style.css\" \"index.html\" \"public/client.js\" -c \"echo CSS/HTML/JS file changed - browser will auto-reload\"",
     "postinstall": "node scripts/setup-yt-dlp.js",
     "build": "node scripts/build-exe.js",
     "build-direct": "pkg . --targets node18-win-x64 --output dist/UniversalVideoDownloader.exe"
@@ -20,7 +23,24 @@
     "socket.io": "^4.7.5"
   },
   "devDependencies": {
-    "pkg": "^5.8.1"
+    "pkg": "^5.8.1",
+    "nodemon": "^3.0.1",
+    "concurrently": "^8.2.2",
+    "chokidar-cli": "^3.0.0"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "server.js",
+      "scripts/"
+    ],
+    "ext": "js",
+    "ignore": [
+      "public/",
+      "downloads/",
+      "bin/",
+      "dist/"
+    ],
+    "delay": "1000"
   },
   "pkg": {
     "assets": [
