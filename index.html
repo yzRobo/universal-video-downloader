@@ -17,7 +17,7 @@
             <div id="sections-container">
                 <!-- Template Section (will be cloned) -->
                 <div class="download-section is-public">
-                    <button type="button" class="remove-section-btn" style="display: none;">X</button>
+                    <button type="button" class="remove-section-btn" style="display: none;">×</button>
                     <h3 class="section-title">Section 1</h3>
 
                     <!-- Download Type Toggle -->
@@ -67,12 +67,16 @@
                     <div class="video-rows-container">
                         <!-- Template Video Row (will be cloned) -->
                         <div class="video-row">
-                            <input type="text" class="video-url" placeholder="Paste video URL (YouTube, Vimeo, Twitter, etc.)" required>
-                            <span class="platform-indicator"></span>
-                            <div class="domain-fields-wrapper">
-                                <input type="text" class="domain-override" placeholder="Optional: Override domain for this URL">
+                            <div class="video-row-main">
+                                <input type="text" class="video-url" placeholder="Paste video URL (YouTube, Vimeo, Twitter, etc.)" required>
+                                <div class="domain-fields-wrapper">
+                                    <input type="text" class="domain-override" placeholder="Optional: Override domain for this URL">
+                                </div>
                             </div>
-                            <button type="button" class="remove-video-btn">×</button>
+                            <div class="video-row-controls">
+                                <span class="platform-indicator"></span>
+                                <button type="button" class="remove-video-btn">×</button>
+                            </div>
                         </div>
                     </div>
 
