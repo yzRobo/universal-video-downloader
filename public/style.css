@@ -1274,3 +1274,34 @@ button:disabled {
     justify-content: center;
     color: white;
     font-weight: 600;
+
+    .progress-bar-inner {
+        height: 100%;
+        background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+        width: 0%;
+        transition: width var(--transition-fast);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        position: relative; 
+        overflow: hidden;
+    }
+    
+    .progress-bar-inner::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+        animation: shimmer 2s infinite;
+    }
+    
+    /* START: Added Keyframe */
+    @keyframes shimmer {
+        0% { left: -100%; }
+        100% { left: 100%; }
+    }
