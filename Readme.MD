@@ -4,20 +4,17 @@ A self-hosted, incredibly simple, and powerful web interface for downloading vid
 
 With its latest update, the application is now a **fully portable, double-click-to-run executable** for Windows. No installation or command-line knowledge required.
 
-## What's New in Version 3.0
+## What's New in Version 3.2
 
-This is a complete overhaul focused on ease of use and portability:
-
-*   **One-Click Start:** No more scripts or commands. Just double-click `UniversalVideoDownloader.exe` to run the application.
-*   **Automatic Browser Launch:** Your default web browser will automatically open to the downloader interface seconds after you start the app.
-*   **Smart & Robust:** The server automatically finds an open port if the default is in use and provides clear, user-friendly error messages.
-*   **Cleaner Distribution:** The entire application is contained in a single folder. Just the `.exe`, a `bin` folder for its tools, and a `downloads` folder.
-*   **Fully Portable:** Keep the folder on your desktop or a USB drive. As long as the `exe`, `bin`, and `downloads` folders are kept together, it just works.
+*   **YouTube Cookie Authentication:** Download age-restricted and sign-in required content
+*   **Automatic Cookie Detection:** Just place `cookies.txt` in the downloads folder
+*   **Seamless Integration:** No UI changes needed, works transparently
+*   **Enhanced Authentication:** Bypass YouTube's age verification and regional restrictions
 
 ## Key Features
 
 *   **Multi-Platform Support:** Download from:
-    *   **YouTube** - Videos, playlists, shorts
+    *   **YouTube** - Videos, playlists, shorts (now with cookie support for restricted content)
     *   **Vimeo** - Public and private/embedded videos
     *   **Twitter/X**, **Instagram**, **TikTok**, **Threads**, and more.
 *   **User-Friendly Interface:**
@@ -67,6 +64,23 @@ That's it! A console window will appear, and your default web browser will open 
     *   Click "Start All Downloads".
     *   Monitor progress with real-time stats and cancel anytime if needed.
 
+### Using YouTube Cookies (For Age-Restricted Content)
+
+To download age-restricted or sign-in required YouTube videos:
+
+1.  **Export YouTube cookies** from your browser:
+    *   Install a browser extension like "Get cookies.txt" or "cookies.txt"
+    *   Go to YouTube and sign in to your account
+    *   Use the extension to export cookies in Netscape format
+2.  **Save the cookies file:**
+    *   Name it exactly `cookies.txt` (case-sensitive)
+    *   Place it in the `downloads` folder of the application
+3.  **Run the downloader normally:**
+    *   The app will automatically detect and use the cookies
+    *   You'll see "Found cookies.txt file, will use for authentication" in the logs
+
+The cookies will remain active for all YouTube downloads until you remove the file.
+
 ### Advanced: Downloading Private/Embedded Videos
 
 Some videos (especially from Vimeo) are embedded on private sites.
@@ -89,9 +103,14 @@ If you want to modify the code and build the executable yourself:
     ```
 4.  **Run in Development Mode:**
     ```bash
+    npm run dev
+    ```
+    This enables auto-reload for CSS/HTML/JS changes during development.
+5.  **Run in Production Mode:**
+    ```bash
     npm start
     ```
-5.  **Build the Executable:** This will create a `dist` folder containing the portable application.
+6.  **Build the Executable:** This will create a `dist` folder containing the portable application.
     ```bash
     npm run build
     ```
@@ -101,6 +120,7 @@ If you want to modify the code and build the executable yourself:
 *   **Application closes immediately:** Make sure the `bin` folder with `yt-dlp.exe` and `ffmpeg.exe` is in the same directory as `UniversalVideoDownloader.exe`. If they are missing, try running `npm install` (if you're a developer) or re-downloading the release ZIP.
 *   **Antivirus/Firewall issues:** If the app is blocked, try temporarily disabling your antivirus or adding an exception for `UniversalVideoDownloader.exe` and the `bin` folder.
 *   **Downloads fail:** Check that the URL is correct. For private videos, ensure you are using "Private" mode with the correct referer domain.
+*   **Age-restricted YouTube videos:** Make sure you have a valid `cookies.txt` file in the downloads folder. The file must be in Netscape cookie format.
 *   **"Could not find an available port":** The app tries to use port 3000 and up. If this error occurs, another application is using all the ports it's trying. Close other development servers or applications and try again.
 
 ## Supported Sites
