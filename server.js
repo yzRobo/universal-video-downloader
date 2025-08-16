@@ -498,6 +498,17 @@ if (typeof process.pkg !== 'undefined') {
         socket.emit("log", { type: "warning", message: `${logPrefix} FFmpeg not found at: ${ffmpegPath}. Trying system ffmpeg...` });
     }
     
+    // Check for cookies.txt file in downloads folder
+    const cookiesPath = path.join(getDownloadsDir(), 'cookies.txt');
+    let hasCookies = false;
+    try {
+        await fs.promises.access(cookiesPath, fs.constants.F_OK);
+        hasCookies = true;
+        socket.emit("log", { type: "info", message: `${logPrefix} Found cookies.txt file, will use for authentication` });
+    } catch (err) {
+        // No cookies file found, continue without it
+    }
+    
     socket.emit("log", { type: "info", message: `${logPrefix} Downloading from ${platform} using yt-dlp: ${videoInfo.url}` });
   
     try {
@@ -512,7 +523,16 @@ if (typeof process.pkg !== 'undefined') {
         let errorOutput = '';
         
         try {
-            const infoProcess = spawnYtDlp(['--dump-json', '--no-warnings', videoInfo.url]);
+            const infoArgs = ['--dump-json', '--no-warnings'];
+            
+            // Add cookies if available
+            if (hasCookies) {
+                infoArgs.push('--cookies', cookiesPath);
+            }
+            
+            infoArgs.push(videoInfo.url);
+            
+            const infoProcess = spawnYtDlp(infoArgs);
             
             infoProcess.stdout.on('data', (data) => videoInfoJson += data.toString());
             infoProcess.stderr.on('data', (data) => {
@@ -565,6 +585,11 @@ if (typeof process.pkg !== 'undefined') {
   
         // Construct yt-dlp arguments
         const ytDlpArgs = [];
+        
+        // Add cookies if available
+        if (hasCookies) {
+            ytDlpArgs.push('--cookies', cookiesPath);
+        }
         
         if (videoInfo.domain) {
             ytDlpArgs.push('--referer', videoInfo.domain);
