@@ -5,7 +5,8 @@ const path = require('path');
 const { createWriteStream } = require('fs');
 const { exec, execSync } = require('child_process');
 const { promisify } = require('util');
-const axios = require('axios');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 
 const execAsync = promisify(exec);
 
@@ -21,23 +22,15 @@ const DOWNLOAD_URL_LINUX = `https://github.com/yt-dlp/yt-dlp/releases/latest/dow
 
 async function downloadFile(url, dest) {
     console.log(`Attempting to download from: ${url}`);
-    
-    const { data } = await axios({
-        url,
-        method: 'GET',
-        responseType: 'stream',
+
+    const response = await fetch(url, {
         headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+            'User-Agent': 'universal-video-downloader'
         }
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status} downloading ${url}`);
 
-    const writer = createWriteStream(dest);
-    data.pipe(writer);
-
-    return new Promise((resolve, reject) => {
-        writer.on('finish', resolve);
-        writer.on('error', reject);
-    });
+    await pipeline(Readable.fromWeb(response.body), createWriteStream(dest));
 }
 
 async function setWindowsPermissions(filePath) {

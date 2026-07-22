@@ -3,9 +3,8 @@
   const { spawn } = require("child_process");
   const fs = require("fs");
   const path = require("path");
-  const { Readable } = require("stream");
+  const { Readable, Transform } = require("stream");
   const { pipeline } = require("stream/promises");
-  const { load } = require("cheerio");
   const express = require("express");
   const { createServer } = require("http");
   const { Server } = require("socket.io");
@@ -312,18 +311,18 @@
       let received = 0;
       let lastLogged = 0;
 
-      const progress = new (require('stream').Transform)({
+      const progress = new Transform({
           transform(chunk, enc, cb) {
               received += chunk.length;
               if (received - lastLogged > 15 * 1024 * 1024) {
                   lastLogged = received;
                   const mb = (received / 1024 / 1024).toFixed(0);
-                  const totalMb = totalBytes ? ` / ${(totalBytes / 1024 / 1024).toFixed(0)} MB` : ' MB';
-                  broadcastLog('info', `  ${label}: ${mb}${totalBytes ? ' MB' : ''}${totalBytes ? totalMb : ''} downloaded...`);
+                  const total = totalBytes ? ` of ${(totalBytes / 1024 / 1024).toFixed(0)}` : '';
+                  broadcastLog('info', `  ${label}: ${mb}${total} MB downloaded...`);
               }
               cb(null, chunk);
           }
-      })();
+      });
 
       await pipeline(Readable.fromWeb(response.body), progress, fs.createWriteStream(dest));
   }
@@ -1153,14 +1152,19 @@
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       
       const responseText = await response.text();
-      const $ = load(responseText);
 
-      // Guard against empty script tags: $(el).html() can be null
-      const scriptTag = $("script").filter((i, el) => ($(el).html() || '').includes("window.playerConfig =")).first();
-      if (scriptTag.length === 0) {
+      // Pull the playerConfig JSON out of its inline <script> tag
+      const marker = "window.playerConfig =";
+      const markerIdx = responseText.indexOf(marker);
+      if (markerIdx === -1) {
           throw new Error("Could not find playerConfig in page (video may be private or page layout changed)");
       }
-      const playerConfigString = scriptTag.html().replace("window.playerConfig = ", "").replace(/;\s*$/, "");
+      let playerConfigString = responseText.slice(markerIdx + marker.length);
+      const scriptEnd = playerConfigString.indexOf("</script>");
+      if (scriptEnd !== -1) {
+          playerConfigString = playerConfigString.slice(0, scriptEnd);
+      }
+      playerConfigString = playerConfigString.trim().replace(/;\s*$/, "");
       const playerConfig = JSON.parse(playerConfigString);
 
       const cdns = playerConfig?.request?.files?.hls?.cdns || {};
