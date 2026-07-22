@@ -150,4 +150,11 @@ package-lock.json
 *.mkv
 *.webm
 *.flv
-bin/yt-dlp.exe
+
+# App binaries and user data (downloaded/created at runtime)
+bin/
+downloads/*
+!downloads/.gitkeep
+cookies.txt
+*.exe.new
+update-uvd.bat

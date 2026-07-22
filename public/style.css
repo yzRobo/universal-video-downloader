@@ -224,6 +224,18 @@ h1::after {
     margin-bottom: var(--space-lg);
     font-size: 1.25rem;
     font-weight: 600;
+}
+
+.progress-bar-inner {
+    height: 100%;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    width: 0%;
+    transition: width var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 600;
     font-size: 0.875rem;
     position: relative;
     overflow: hidden;
@@ -605,7 +617,6 @@ select:focus-visible {
         max-height: none;
         overflow: visible;
     }
-}
 }
 
 .platform-grid {
@@ -1264,44 +1275,90 @@ button:disabled {
     box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-.progress-bar-inner {
-    height: 100%;
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    width: 0%;
-    transition: width var(--transition-fast);
+/* App update banner */
+#update-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-lg);
+    flex-wrap: wrap;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: var(--space-lg);
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.update-banner-actions {
     display: flex;
     align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: 600;
+    gap: var(--space-md);
+}
 
-    .progress-bar-inner {
-        height: 100%;
-        background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-        width: 0%;
-        transition: width var(--transition-fast);
-        display: flex;
+#install-update-btn {
+    background: linear-gradient(135deg, var(--success), var(--success-light));
+    padding: var(--space-sm) var(--space-lg);
+    font-size: 0.9rem;
+}
+
+#update-release-link {
+    color: var(--success-light);
+    font-weight: 600;
+}
+
+/* Settings bar (cookies / yt-dlp update) */
+.settings-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-xl);
+    background: var(--surface-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-xl);
+    padding: var(--space-xl);
+    margin-bottom: var(--space-lg);
+}
+
+.settings-cookie-group {
+    flex: 1;
+    min-width: 0;
+}
+
+.settings-ytdlp-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+}
+
+.settings-hint {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    margin: 0;
+}
+
+#cookie-status {
+    color: var(--text-subtle);
+}
+
+.log-warning {
+    color: var(--warning-light);
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .settings-bar {
+        flex-direction: column;
+    }
+
+    .settings-ytdlp-group {
+        flex-direction: row;
         align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: 600;
-        position: relative; 
-        overflow: hidden;
-    }
-    
-    .progress-bar-inner::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -100%;
         width: 100%;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-        animation: shimmer 2s infinite;
+        justify-content: space-between;
     }
-    
-    /* START: Added Keyframe */
-    @keyframes shimmer {
-        0% { left: -100%; }
-        100% { left: 100%; }
-    }
+}

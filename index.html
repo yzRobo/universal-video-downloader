@@ -13,7 +13,43 @@
         <br>
         <p class="subtitle">Download videos from YouTube, Vimeo, Twitter, Instagram, TikTok, and more</p>
         
+        <!-- App update banner (shown when a newer release exists on GitHub) -->
+        <div id="update-banner" class="hidden">
+            <span id="update-banner-text"></span>
+            <div class="update-banner-actions">
+                <a id="update-release-link" href="#" target="_blank" rel="noopener" class="hidden">View release</a>
+                <button type="button" id="install-update-btn" class="hidden">Update &amp; Restart</button>
+            </div>
+        </div>
+
         <form id="download-form">
+            <!-- Global authentication settings -->
+            <div class="settings-bar">
+                <div class="form-group settings-cookie-group">
+                    <label for="cookie-source">Sign-in / Cookies (for age-restricted or private videos)</label>
+                    <select id="cookie-source">
+                        <option value="auto" selected>Automatic (use cookies.txt if present)</option>
+                        <option value="firefox">Use my Firefox login (recommended)</option>
+                        <option value="edge">Use my Microsoft Edge login</option>
+                        <option value="chrome">Use my Chrome login</option>
+                        <option value="brave">Use my Brave login</option>
+                        <option value="opera">Use my Opera login</option>
+                        <option value="vivaldi">Use my Vivaldi login</option>
+                        <option value="none">No cookies</option>
+                    </select>
+                    <p class="settings-hint" id="cookie-hint">
+                        Reads cookies directly from your browser &mdash; no manual export needed. Just be signed in to the site in that browser.
+                        Tip: close the browser first for the most reliable read. Recent Chrome versions may block cookie access on Windows; if Chrome fails, use Firefox or a cookies.txt file.
+                    </p>
+                    <p class="settings-hint" id="cookie-status"></p>
+                </div>
+                <div class="settings-ytdlp-group">
+                    <span class="settings-hint" id="app-version"></span>
+                    <span class="settings-hint" id="ytdlp-version">yt-dlp: checking&hellip;</span>
+                    <button type="button" id="update-ytdlp-btn" class="btn-secondary">Update yt-dlp</button>
+                </div>
+            </div>
+
             <!-- Container for dynamic sections -->
             <div id="sections-container">
                 <!-- Template Section (will be cloned) -->

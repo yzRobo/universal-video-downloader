@@ -1,33 +1,10 @@
 // server.js
 
-if (typeof process.pkg !== 'undefined') {
-    const Module = require('module');
-    const originalResolveFilename = Module._resolveFilename;
-    
-    Module._resolveFilename = function (request, parent, isMain) {
-        // Handle axios special case
-        if (request === 'axios' || request.includes('axios/dist/node/axios.cjs')) {
-            try {
-                // Try to resolve axios from the bundled modules
-                return originalResolveFilename.call(this, 'axios', parent, isMain);
-            } catch (e) {
-                // If that fails, try the index.js directly
-                try {
-                    return originalResolveFilename.call(this, 'axios/index.js', parent, isMain);
-                } catch (e2) {
-                    // Last resort - try lib/axios.js
-                    return originalResolveFilename.call(this, 'axios/lib/axios.js', parent, isMain);
-                }
-            }
-        }
-        return originalResolveFilename.call(this, request, parent, isMain);
-    };
-  }
-  
   const { spawn } = require("child_process");
   const fs = require("fs");
   const path = require("path");
-  const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+  const { Readable } = require("stream");
+  const { pipeline } = require("stream/promises");
   const { load } = require("cheerio");
   const express = require("express");
   const { createServer } = require("http");
@@ -191,6 +168,318 @@ if (typeof process.pkg !== 'undefined') {
       }
   }
   
+  // =========================================================================
+  //                  PROCESS / COOKIE / UPDATE HELPERS
+  // =========================================================================
+
+  // Kill a process and its whole tree (yt-dlp spawns ffmpeg children that
+  // plain .kill() leaves running on Windows)
+  function killProcessTree(proc) {
+      if (!proc || proc.killed) return;
+      if (platform === 'win32') {
+          try {
+              spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true });
+          } catch (e) {
+              proc.kill('SIGKILL');
+          }
+      } else {
+          proc.kill('SIGKILL');
+      }
+  }
+
+  // Find a cookies.txt file (downloads folder or next to the app)
+  function findCookiesFile() {
+      const candidates = [
+          path.join(getDownloadsDir(), 'cookies.txt'),
+          path.join(basePath, 'cookies.txt')
+      ];
+      for (const candidate of candidates) {
+          try {
+              fs.accessSync(candidate, fs.constants.F_OK);
+              return candidate;
+          } catch (e) { /* not here, try next */ }
+      }
+      return null;
+  }
+
+  const SUPPORTED_COOKIE_BROWSERS = ['firefox', 'chrome', 'edge', 'brave', 'opera', 'vivaldi', 'chromium'];
+
+  // Turn the UI's cookie-source choice into yt-dlp arguments.
+  // Returns { args: [...], description: string }
+  function resolveCookieArgs(cookieSource) {
+      const source = cookieSource || 'auto';
+
+      if (source === 'none') {
+          return { args: [], description: null };
+      }
+
+      if (SUPPORTED_COOKIE_BROWSERS.includes(source)) {
+          return {
+              args: ['--cookies-from-browser', source],
+              description: `browser cookies (${source})`
+          };
+      }
+
+      // 'auto' (default): use cookies.txt if one exists
+      const cookiesFile = findCookiesFile();
+      if (cookiesFile) {
+          return { args: ['--cookies', cookiesFile], description: `cookies.txt (${cookiesFile})` };
+      }
+      return { args: [], description: null };
+  }
+
+  // --- yt-dlp version / self-update ---
+  let ytDlpVersion = null;
+  let isUpdatingYtDlp = false;
+
+  function getYtDlpVersion() {
+      return new Promise((resolve) => {
+          const proc = spawnYtDlp(['--version']);
+          let out = '';
+          proc.stdout.on('data', (d) => out += d.toString());
+          proc.on('close', () => resolve(out.trim() || null));
+          proc.on('error', () => resolve(null));
+      });
+  }
+
+  // yt-dlp standalone builds support self-updating via -U. A stale yt-dlp is
+  // the most common reason YouTube downloads suddenly stop working.
+  function updateYtDlp(onLog) {
+      return new Promise((resolve) => {
+          if (isUpdatingYtDlp) return resolve({ updated: false, message: 'Update already in progress' });
+          if (isDownloading) return resolve({ updated: false, message: 'Busy downloading; skipping yt-dlp update' });
+          isUpdatingYtDlp = true;
+
+          const proc = spawnYtDlp(['-U']);
+          let output = '';
+
+          const handleData = (d) => {
+              const text = d.toString();
+              output += text;
+              text.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+                  if (onLog) onLog(line);
+                  console.log('[yt-dlp update]', line);
+              });
+          };
+          proc.stdout.on('data', handleData);
+          proc.stderr.on('data', handleData);
+
+          proc.on('close', async (code) => {
+              isUpdatingYtDlp = false;
+              ytDlpVersion = await getYtDlpVersion();
+              const updated = code === 0 && !output.includes('is up to date');
+              resolve({ updated, message: output.trim(), version: ytDlpVersion });
+          });
+          proc.on('error', (err) => {
+              isUpdatingYtDlp = false;
+              resolve({ updated: false, message: `Update failed: ${err.message}` });
+          });
+      });
+  }
+
+  // =========================================================================
+  //                  FIRST-RUN BINARY BOOTSTRAP (single-exe distribution)
+  // =========================================================================
+  // The exe ships alone; yt-dlp and ffmpeg are downloaded next to it on
+  // first run so users only ever need to download one file.
+
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const BINARY_SOURCES = {
+      'yt-dlp': {
+          win32: 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe',
+          darwin: 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos',
+          linux: 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
+      },
+      'ffmpeg': {
+          win32: 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64',
+          darwin: `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-darwin-${arch}`,
+          linux: `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-linux-${arch}`
+      }
+  };
+
+  function broadcastLog(type, message) {
+      console.log(message);
+      io.emit("log", { type, message });
+  }
+
+  async function downloadToFile(url, dest, label) {
+      const response = await fetch(url, {
+          headers: { 'User-Agent': 'universal-video-downloader' }
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status} downloading ${label}`);
+
+      const totalBytes = parseInt(response.headers.get('content-length') || '0', 10);
+      let received = 0;
+      let lastLogged = 0;
+
+      const progress = new (require('stream').Transform)({
+          transform(chunk, enc, cb) {
+              received += chunk.length;
+              if (received - lastLogged > 15 * 1024 * 1024) {
+                  lastLogged = received;
+                  const mb = (received / 1024 / 1024).toFixed(0);
+                  const totalMb = totalBytes ? ` / ${(totalBytes / 1024 / 1024).toFixed(0)} MB` : ' MB';
+                  broadcastLog('info', `  ${label}: ${mb}${totalBytes ? ' MB' : ''}${totalBytes ? totalMb : ''} downloaded...`);
+              }
+              cb(null, chunk);
+          }
+      })();
+
+      await pipeline(Readable.fromWeb(response.body), progress, fs.createWriteStream(dest));
+  }
+
+  async function ensureBinaries() {
+      const binDir = path.join(basePath, 'bin');
+      const needed = [
+          { name: 'yt-dlp', target: ytDlpPath },
+          { name: 'ffmpeg', target: ffmpegPath }
+      ].filter(b => !fs.existsSync(b.target));
+
+      if (needed.length === 0) return true;
+
+      fs.mkdirSync(binDir, { recursive: true });
+      broadcastLog('info', `First run: downloading required components (${needed.map(b => b.name).join(', ')}). This happens only once...`);
+
+      for (const binary of needed) {
+          const url = BINARY_SOURCES[binary.name][platform];
+          if (!url) {
+              broadcastLog('error', `No download source for ${binary.name} on ${platform}.`);
+              return false;
+          }
+          const tempPath = binary.target + '.download';
+          try {
+              broadcastLog('info', `Downloading ${binary.name}...`);
+              await downloadToFile(url, tempPath, binary.name);
+              fs.renameSync(tempPath, binary.target);
+              if (platform !== 'win32') fs.chmodSync(binary.target, 0o755);
+              broadcastLog('success', `✓ ${binary.name} installed (${(fs.statSync(binary.target).size / 1024 / 1024).toFixed(1)} MB)`);
+          } catch (err) {
+              try { fs.rmSync(tempPath, { force: true }); } catch (e) {}
+              broadcastLog('error', `✗ Failed to download ${binary.name}: ${err.message}. Check your internet connection and restart the app.`);
+              return false;
+          }
+      }
+      return true;
+  }
+
+  // Resolves once binaries are present (or bootstrap failed); downloads wait on this
+  let binariesReadyResolve;
+  const binariesReady = new Promise((resolve) => { binariesReadyResolve = resolve; });
+
+  // =========================================================================
+  //                  APP SELF-UPDATE (via GitHub releases)
+  // =========================================================================
+  const APP_REPO = 'yzRobo/universal-video-downloader';
+  const APP_EXE_NAME = 'UniversalVideoDownloader.exe';
+  let APP_VERSION = '0.0.0';
+  try { APP_VERSION = require('./package.json').version; } catch (e) {}
+
+  let lastAppUpdateStatus = { currentVersion: APP_VERSION, updateAvailable: false };
+  let isInstallingAppUpdate = false;
+
+  function compareVersions(a, b) {
+      const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+      const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+          if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+      }
+      return 0;
+  }
+
+  async function checkForAppUpdate() {
+      try {
+          const res = await fetch(`https://api.github.com/repos/${APP_REPO}/releases/latest`, {
+              headers: {
+                  'User-Agent': 'universal-video-downloader',
+                  'Accept': 'application/vnd.github+json'
+              }
+          });
+          if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
+          const release = await res.json();
+          const latestVersion = String(release.tag_name || '').replace(/^v/i, '');
+          const exeAsset = (release.assets || []).find(a => a.name === APP_EXE_NAME);
+
+          lastAppUpdateStatus = {
+              currentVersion: APP_VERSION,
+              latestVersion,
+              updateAvailable: !!latestVersion && compareVersions(latestVersion, APP_VERSION) > 0,
+              canSelfUpdate: isPkg && platform === 'win32' && !!exeAsset,
+              downloadUrl: exeAsset ? exeAsset.browser_download_url : null,
+              releasePage: release.html_url || `https://github.com/${APP_REPO}/releases`
+          };
+      } catch (err) {
+          console.log('App update check failed:', err.message);
+          lastAppUpdateStatus = { currentVersion: APP_VERSION, updateAvailable: false, error: err.message };
+      }
+      return lastAppUpdateStatus;
+  }
+
+  // Downloads the new exe next to the current one, then hands off to a small
+  // batch script that swaps the files once this process exits and relaunches.
+  async function installAppUpdate(socket) {
+      if (!isPkg || platform !== 'win32') {
+          socket.emit("log", { type: 'error', message: 'In-app updating only works in the packaged Windows exe. Use git pull instead.' });
+          return false;
+      }
+      if (!lastAppUpdateStatus.downloadUrl) {
+          socket.emit("log", { type: 'error', message: 'No update download URL available.' });
+          return false;
+      }
+      if (isInstallingAppUpdate) return false;
+      isInstallingAppUpdate = true;
+
+      const exePath = process.execPath;
+      const newExePath = exePath + '.new';
+      const updaterPath = path.join(basePath, 'update-uvd.bat');
+
+      try {
+          broadcastLog('info', `Downloading update v${lastAppUpdateStatus.latestVersion}...`);
+          await downloadToFile(lastAppUpdateStatus.downloadUrl, newExePath, 'app update');
+
+          const stats = fs.statSync(newExePath);
+          if (stats.size < 5 * 1024 * 1024) {
+              throw new Error('Downloaded update looks too small; aborting.');
+          }
+
+          const batch = [
+              '@echo off',
+              'title Updating Universal Video Downloader',
+              'echo Waiting for the application to close...',
+              'timeout /t 2 /nobreak >nul',
+              ':retry',
+              `del "${exePath}" >nul 2>&1`,
+              `if exist "${exePath}" (`,
+              '    timeout /t 1 /nobreak >nul',
+              '    goto retry',
+              ')',
+              `move /y "${newExePath}" "${exePath}" >nul`,
+              'echo Update complete! Restarting...',
+              `start "" "${exePath}"`,
+              '(goto) 2>nul & del "%~f0"'
+          ].join('\r\n');
+          fs.writeFileSync(updaterPath, batch);
+
+          broadcastLog('success', '✓ Update downloaded. Restarting the application...');
+          io.emit('app-update-installing');
+
+          const child = spawn('cmd.exe', ['/c', 'start', 'Updating...', '/min', updaterPath], {
+              detached: true,
+              stdio: 'ignore',
+              cwd: basePath
+          });
+          child.unref();
+
+          setTimeout(() => process.exit(0), 1500);
+          return true;
+      } catch (err) {
+          isInstallingAppUpdate = false;
+          try { fs.rmSync(newExePath, { force: true }); } catch (e) {}
+          broadcastLog('error', `✗ Update failed: ${err.message}`);
+          socket.emit('app-update-failed', { message: err.message });
+          return false;
+      }
+  }
+
   // Check if yt-dlp exists on startup
   async function checkYtDlp() {
       try {
@@ -254,8 +543,35 @@ if (typeof process.pkg !== 'undefined') {
       }
   }
   
-  // Check yt-dlp on startup
-  checkYtDlp();
+  // Startup sequence: bootstrap missing binaries (first run of the single
+  // exe), then self-update yt-dlp so YouTube extractor changes don't silently
+  // break downloads, then check GitHub for a newer app release.
+  (async () => {
+      const bootstrapped = await ensureBinaries();
+      binariesReadyResolve(bootstrapped);
+
+      if (bootstrapped) {
+          const ok = await checkYtDlp();
+          if (ok) {
+              ytDlpVersion = await getYtDlpVersion();
+              console.log('Checking for yt-dlp updates...');
+              const result = await updateYtDlp();
+              if (result.updated) {
+                  console.log(`✓ yt-dlp updated to ${result.version}`);
+              } else {
+                  console.log('yt-dlp is up to date or could not be updated.');
+              }
+              io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile() });
+          }
+      }
+
+      const updateStatus = await checkForAppUpdate();
+      if (updateStatus.updateAvailable) {
+          console.log(`\n🔔 A new version (v${updateStatus.latestVersion}) is available! You are on v${updateStatus.currentVersion}.`);
+          console.log('   Use the "Update & Restart" button in the web interface to update.\n');
+      }
+      io.emit('app-update-status', lastAppUpdateStatus);
+  })();
   
   // For serving static files when running as pkg
   if (isPkg) {
@@ -289,6 +605,8 @@ if (typeof process.pkg !== 'undefined') {
   // --- Module-level variables to handle cancellation ---
   let isCancelled = false;
   let activeProcess = null;
+  let isDownloading = false;
+  let currentCookieArgs = { args: [], description: null };
   
   // --- Platform Detection ---
   function detectPlatform(url) {
@@ -312,18 +630,72 @@ if (typeof process.pkg !== 'undefined') {
       console.log("A user connected:", socket.id);
     }
   
+    // Tell the client what we know as soon as it connects
+    socket.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile() });
+    socket.emit('app-update-status', lastAppUpdateStatus);
+
+    socket.on("check-app-update", async () => {
+      await checkForAppUpdate();
+      socket.emit('app-update-status', lastAppUpdateStatus);
+    });
+
+    socket.on("install-app-update", async () => {
+      if (isDownloading) {
+          socket.emit("log", { type: 'error', message: 'Cannot update the app while a download is in progress.' });
+          socket.emit('app-update-failed', { message: 'Download in progress' });
+          return;
+      }
+      await installAppUpdate(socket);
+    });
+
     socket.on("start-download", async (data) => {
+      const binariesOk = await binariesReady;
+      if (!binariesOk) {
+          socket.emit("log", { type: 'error', message: 'Required components (yt-dlp/ffmpeg) could not be downloaded. Check your internet connection and restart the app.' });
+          socket.emit("all-batches-complete", { cancelled: false });
+          return;
+      }
+      if (!data || !Array.isArray(data.batches) || data.batches.length === 0) {
+          socket.emit("log", { type: 'error', message: 'No batches received. Nothing to download.' });
+          socket.emit("all-batches-complete", { cancelled: false });
+          return;
+      }
+      if (isDownloading) {
+          socket.emit("log", { type: 'error', message: 'A download is already in progress. Please wait for it to finish or cancel it.' });
+          return;
+      }
       console.log("Received download request with batches:", data.batches.length);
       isCancelled = false;
-      await processAllBatches(data.batches, socket);
+      isDownloading = true;
+      currentCookieArgs = resolveCookieArgs(data.cookieSource);
+      if (currentCookieArgs.description) {
+          socket.emit("log", { type: 'info', message: `Authentication: using ${currentCookieArgs.description}` });
+      }
+      try {
+          await processAllBatches(data.batches, socket);
+      } finally {
+          isDownloading = false;
+      }
     });
-  
+
+    socket.on("update-ytdlp", async () => {
+      if (isDownloading) {
+          socket.emit("log", { type: 'error', message: 'Cannot update yt-dlp while a download is in progress.' });
+          socket.emit("ytdlp-update-complete", { updated: false, version: ytDlpVersion });
+          return;
+      }
+      socket.emit("log", { type: 'info', message: 'Checking for yt-dlp updates...' });
+      const result = await updateYtDlp((line) => socket.emit("log", { type: 'info', message: `yt-dlp: ${line}` }));
+      socket.emit("ytdlp-update-complete", { updated: result.updated, version: result.version || ytDlpVersion });
+      io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile() });
+    });
+
     socket.on("cancel-download", () => {
       console.log("Cancellation request received from:", socket.id);
       isCancelled = true;
       if (activeProcess) {
           socket.emit("log", { type: 'error', message: '--- CANCELLATION INITIATED BY USER ---' });
-          activeProcess.kill('SIGKILL');
+          killProcessTree(activeProcess);
       }
     });
   
@@ -498,17 +870,6 @@ if (typeof process.pkg !== 'undefined') {
         socket.emit("log", { type: "warning", message: `${logPrefix} FFmpeg not found at: ${ffmpegPath}. Trying system ffmpeg...` });
     }
     
-    // Check for cookies.txt file in downloads folder
-    const cookiesPath = path.join(getDownloadsDir(), 'cookies.txt');
-    let hasCookies = false;
-    try {
-        await fs.promises.access(cookiesPath, fs.constants.F_OK);
-        hasCookies = true;
-        socket.emit("log", { type: "info", message: `${logPrefix} Found cookies.txt file, will use for authentication` });
-    } catch (err) {
-        // No cookies file found, continue without it
-    }
-    
     socket.emit("log", { type: "info", message: `${logPrefix} Downloading from ${platform} using yt-dlp: ${videoInfo.url}` });
   
     try {
@@ -522,26 +883,23 @@ if (typeof process.pkg !== 'undefined') {
         let videoInfoJson = '';
         let errorOutput = '';
         
-        try {
-            const infoArgs = ['--dump-json', '--no-warnings'];
-            
-            // Add cookies if available
-            if (hasCookies) {
-                infoArgs.push('--cookies', cookiesPath);
+        // Metadata pre-fetch is best-effort only: if it fails we still attempt
+        // the actual download, which can succeed where --dump-json does not.
+        {
+            const infoArgs = ['--dump-json', '--no-warnings', '--no-playlist',
+                              ...currentCookieArgs.args];
+            if (videoInfo.domain) {
+                infoArgs.push('--referer', videoInfo.domain);
             }
-            
             infoArgs.push(videoInfo.url);
-            
+
             const infoProcess = spawnYtDlp(infoArgs);
-            
+
             infoProcess.stdout.on('data', (data) => videoInfoJson += data.toString());
             infoProcess.stderr.on('data', (data) => {
                 errorOutput += data.toString();
-                if (data.toString()) {
-                   socket.emit("log", { type: "info", message: `${logPrefix} yt-dlp: ${data.toString()}` });
-                }
-              });
-            
+            });
+
             const infoCode = await new Promise((resolve) => {
                 infoProcess.on('close', (code) => resolve(code));
                 infoProcess.on('error', (err) => {
@@ -550,16 +908,14 @@ if (typeof process.pkg !== 'undefined') {
                     resolve(1);
                 });
             });
-            
+
             if (infoCode !== 0) {
-                throw new Error(`yt-dlp exited with code ${infoCode}.`);
+                socket.emit("log", { type: "warning", message: `${logPrefix} Could not pre-fetch video info (continuing anyway). ${errorOutput.trim().split('\n').pop() || ''}` });
+                videoInfoJson = '';
             }
-        } catch (error) {
-            const finalErrorMsg = `${logPrefix} Failed to run yt-dlp: ${error.message}. Stderr: ${errorOutput}`;
-            socket.emit("log", { type: "error", message: finalErrorMsg });
-            throw new Error(finalErrorMsg);
         }
-  
+        if (isCancelled) return;
+
         let videoDetails = { title: 'Unknown', duration: 0 };
         
         if (videoInfoJson) {
@@ -571,8 +927,6 @@ if (typeof process.pkg !== 'undefined') {
             } catch (e) {
                 socket.emit("log", { type: "error", message: `${logPrefix} Failed to parse video info: ${e.message}` });
             }
-        } else {
-            socket.emit("log", { type: "error", message: `${logPrefix} No video info returned. ${errorOutput}` });
         }
   
         const sanitizedTitle = (videoDetails.title || 'Unknown')
@@ -585,12 +939,9 @@ if (typeof process.pkg !== 'undefined') {
   
         // Construct yt-dlp arguments
         const ytDlpArgs = [];
-        
-        // Add cookies if available
-        if (hasCookies) {
-            ytDlpArgs.push('--cookies', cookiesPath);
-        }
-        
+
+        ytDlpArgs.push(...currentCookieArgs.args);
+
         if (videoInfo.domain) {
             ytDlpArgs.push('--referer', videoInfo.domain);
         }
@@ -624,7 +975,9 @@ if (typeof process.pkg !== 'undefined') {
                     '-f', 'bestvideo+bestaudio/best',
                     '--merge-output-format', 'mp4'
                 );
-                ytDlpArgs.push('--embed-subs', '--embed-thumbnail', '--add-metadata');
+                // Convert thumbnails to jpg first: webp thumbnails cannot be
+                // embedded into mp4 and used to fail the whole download.
+                ytDlpArgs.push('--embed-thumbnail', '--convert-thumbnails', 'jpg', '--add-metadata');
                 uiFilename += '.mp4';
                 break;
         }
@@ -674,8 +1027,8 @@ if (typeof process.pkg !== 'undefined') {
             const output = data.toString();
             
             const percentMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
-            const speedMatch = output.match(/at\s+([\d.]+\w+\/s)/);
-            const sizeMatch = output.match(/of\s+([\d.]+\w+)/);
+            const speedMatch = output.match(/at\s+~?\s*([\d.]+\w+\/s)/);
+            const sizeMatch = output.match(/of\s+~?\s*([\d.]+\w+)/);
             
             if (percentMatch) {
                 const percent = parseFloat(percentMatch[1]);
@@ -750,18 +1103,22 @@ if (typeof process.pkg !== 'undefined') {
   
     try {
       let playerConfig;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 2; i++) {
           playerConfig = await extractVimeoPlayerConfig(videoInfo.url, videoInfo.domain, logPrefix, socket);
           if (playerConfig) break;
-          if(isCancelled) return;
-          socket.emit("log", { type: "info", message: `${logPrefix} Retrying in 5 seconds...` });
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          if (isCancelled) return;
+          socket.emit("log", { type: "info", message: `${logPrefix} Retrying in 3 seconds...` });
+          await new Promise((resolve) => setTimeout(resolve, 3000));
       }
-      
+
       if (!playerConfig) {
-          throw new Error("Failed to extract player config after multiple retries.");
+          // Direct extraction failed (Vimeo changes its player page regularly).
+          // yt-dlp has a maintained Vimeo extractor, so hand the URL to it.
+          socket.emit("log", { type: "info", message: `${logPrefix} Direct Vimeo extraction failed, falling back to yt-dlp...` });
+          await downloadWithYtDlp(videoInfo, index, total, filenamePrefix, format, 'vimeo', socket);
+          return;
       }
-      
+
       const stream = playerConfig.streamUrl;
   
       const sanitizedTitle = playerConfig.title
@@ -789,26 +1146,37 @@ if (typeof process.pkg !== 'undefined') {
   
   async function extractVimeoPlayerConfig(url, domain, pre, socket) {
     try {
-      const response = await fetch(url, {
-        headers: { 
-          'Referer': domain, 
-          'User-Agent': 'Mozilla/5.0'
-        },
-      });
+      const headers = { 'User-Agent': 'Mozilla/5.0' };
+      if (domain) headers['Referer'] = domain;
+      const response = await fetch(url, { headers });
       
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       
       const responseText = await response.text();
       const $ = load(responseText);
-      
-      const scriptTag = $("script").filter((i, el) => $(el).html().includes("window.playerConfig =")).first();
-      const playerConfigString = scriptTag.html().replace("window.playerConfig = ", "").replace(/;$/, "");
+
+      // Guard against empty script tags: $(el).html() can be null
+      const scriptTag = $("script").filter((i, el) => ($(el).html() || '').includes("window.playerConfig =")).first();
+      if (scriptTag.length === 0) {
+          throw new Error("Could not find playerConfig in page (video may be private or page layout changed)");
+      }
+      const playerConfigString = scriptTag.html().replace("window.playerConfig = ", "").replace(/;\s*$/, "");
       const playerConfig = JSON.parse(playerConfigString);
-  
+
+      const cdns = playerConfig?.request?.files?.hls?.cdns || {};
+      // Take whichever CDN entry exists rather than hard-coding two names
+      const streamUrl = cdns.akfire_interconnect_quic?.avc_url
+          || cdns.fastly_skyfire?.avc_url
+          || Object.values(cdns).map(c => c && (c.avc_url || c.url)).find(Boolean);
+
+      if (!streamUrl) {
+          throw new Error("No HLS stream URL found in player config");
+      }
+
       return {
         title: playerConfig.video.title,
         duration: playerConfig.video.duration,
-        streamUrl: playerConfig.request.files.hls.cdns.akfire_interconnect_quic.avc_url || playerConfig.request.files.hls.cdns.fastly_skyfire.avc_url,
+        streamUrl,
       };
     } catch (error) {
       if (isCancelled) return null;
@@ -820,22 +1188,6 @@ if (typeof process.pkg !== 'undefined') {
       
       return null;
     }
-  }
-  
-  // 3. Update the downloadFile function in setup-yt-dlp.js:
-  async function downloadFile(url, dest) {
-      console.log(`Attempting to download from: ${url}`);
-      
-      const response = await fetch(url, {
-          headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-          }
-      });
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      
-      const buffer = await response.buffer();
-      await fs.promises.writeFile(dest, buffer);
   }
   
   async function downloadHLSStream(m3u8Url, outputFilename, duration, format, resolve, pre, socket, videoIndex) {
@@ -975,12 +1327,4 @@ if (typeof process.pkg !== 'undefined') {
       const minutes = Math.floor((seconds % 3600) / 60);
       const secs = Math.floor(seconds % 60);
       return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  
-  function formatBytes(bytes) {
-      if (bytes === 0) return '0 Bytes';
-      const k = 1024;
-      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }

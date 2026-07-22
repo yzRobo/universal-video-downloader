@@ -12,8 +12,8 @@ const execAsync = promisify(exec);
 // --- CONFIGURATION ---
 const EXECUTABLE_NAME = 'yt-dlp';
 const WIN_FINAL_NAME = `${EXECUTABLE_NAME}.exe`;
-const WIN_SOURCE_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_x86.exe';
-const WIN_SOURCE_NAME = 'yt-dlp_x86.exe';
+const WIN_SOURCE_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
+const WIN_SOURCE_NAME = 'yt-dlp-download.exe';
 
 const DOWNLOAD_URL_MACOS = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${EXECUTABLE_NAME}_macos`;
 const DOWNLOAD_URL_LINUX = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${EXECUTABLE_NAME}`;

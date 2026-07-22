@@ -13,6 +13,92 @@ document.addEventListener("DOMContentLoaded", () => {
     const logOutput = document.getElementById("log-output");
     const cancelBtn = document.getElementById("cancel-btn");
     const toggleLogsBtn = document.getElementById("toggle-logs-btn");
+    const cookieSourceSelect = document.getElementById("cookie-source");
+    const cookieStatus = document.getElementById("cookie-status");
+    const ytdlpVersionSpan = document.getElementById("ytdlp-version");
+    const updateYtdlpBtn = document.getElementById("update-ytdlp-btn");
+
+    // Remember the user's cookie choice between visits
+    const savedCookieSource = localStorage.getItem("cookieSource");
+    if (savedCookieSource) cookieSourceSelect.value = savedCookieSource;
+    cookieSourceSelect.addEventListener("change", () => {
+        localStorage.setItem("cookieSource", cookieSourceSelect.value);
+    });
+
+    // --- yt-dlp status / update ---
+    socket.on("ytdlp-status", ({ version, cookiesFile }) => {
+        ytdlpVersionSpan.textContent = version ? `yt-dlp: ${version}` : "yt-dlp: not found";
+        cookieStatus.textContent = cookiesFile
+            ? `✓ cookies.txt found (${cookiesFile})`
+            : "No cookies.txt file found (only needed if you choose the Automatic option).";
+    });
+
+    updateYtdlpBtn.addEventListener("click", () => {
+        updateYtdlpBtn.disabled = true;
+        updateYtdlpBtn.textContent = "Updating…";
+        resultsContainer.classList.remove("hidden");
+        socket.emit("update-ytdlp");
+    });
+
+    socket.on("ytdlp-update-complete", ({ updated, version }) => {
+        updateYtdlpBtn.disabled = false;
+        updateYtdlpBtn.textContent = "Update yt-dlp";
+        if (version) ytdlpVersionSpan.textContent = `yt-dlp: ${version}`;
+    });
+
+    // --- App self-update ---
+    const updateBanner = document.getElementById("update-banner");
+    const updateBannerText = document.getElementById("update-banner-text");
+    const updateReleaseLink = document.getElementById("update-release-link");
+    const installUpdateBtn = document.getElementById("install-update-btn");
+    const appVersionSpan = document.getElementById("app-version");
+    let awaitingRestart = false;
+
+    socket.on("app-update-status", (status) => {
+        if (status.currentVersion) {
+            appVersionSpan.textContent = `App: v${status.currentVersion}`;
+        }
+        if (!status.updateAvailable) {
+            updateBanner.classList.add("hidden");
+            return;
+        }
+        updateBannerText.textContent = `A new version (v${status.latestVersion}) is available — you are on v${status.currentVersion}.`;
+        updateBanner.classList.remove("hidden");
+        if (status.canSelfUpdate) {
+            installUpdateBtn.classList.remove("hidden");
+            updateReleaseLink.classList.add("hidden");
+        } else {
+            installUpdateBtn.classList.add("hidden");
+            updateReleaseLink.href = status.releasePage || "#";
+            updateReleaseLink.classList.remove("hidden");
+        }
+    });
+
+    installUpdateBtn.addEventListener("click", () => {
+        installUpdateBtn.disabled = true;
+        installUpdateBtn.textContent = "Downloading update…";
+        resultsContainer.classList.remove("hidden");
+        socket.emit("install-app-update");
+    });
+
+    socket.on("app-update-installing", () => {
+        awaitingRestart = true;
+        updateBannerText.textContent = "Updating and restarting — this page will reconnect automatically…";
+        installUpdateBtn.classList.add("hidden");
+    });
+
+    socket.on("app-update-failed", ({ message }) => {
+        installUpdateBtn.disabled = false;
+        installUpdateBtn.textContent = "Update & Restart";
+        installUpdateBtn.classList.remove("hidden");
+        alert(`Update failed: ${message}`);
+    });
+
+    // After the new exe restarts the server, socket.io reconnects — reload to
+    // pick up the new UI
+    socket.io.on("reconnect", () => {
+        if (awaitingRestart) window.location.reload();
+    });
 
     // Platform detection function
     function detectPlatform(url) {
@@ -234,7 +320,7 @@ document.addEventListener("DOMContentLoaded", () => {
         cancelBtn.textContent = "Cancel All";
         logOutput.innerHTML = "";
         
-        socket.emit("start-download", { batches });
+        socket.emit("start-download", { batches, cookieSource: cookieSourceSelect.value });
     });
     
     // --- Socket Event Listeners ---

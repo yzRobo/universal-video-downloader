@@ -4,12 +4,13 @@ A self-hosted, incredibly simple, and powerful web interface for downloading vid
 
 With its latest update, the application is now a **fully portable, double-click-to-run executable** for Windows. No installation or command-line knowledge required.
 
-## What's New in Version 3.2
+## What's New in Version 3.3
 
-*   **YouTube Cookie Authentication:** Download age-restricted and sign-in required content
-*   **Automatic Cookie Detection:** Just place `cookies.txt` in the downloads folder
-*   **Seamless Integration:** No UI changes needed, works transparently
-*   **Enhanced Authentication:** Bypass YouTube's age verification and regional restrictions
+*   **Single-File Download:** The app is now just one exe. On first run it downloads its own components (yt-dlp and ffmpeg) — no more zip files or bin folders to manage.
+*   **Automatic App Updates:** The app checks GitHub for new releases on startup and shows an "Update & Restart" button right in the UI — no need to visit the repo again.
+*   **Automatic yt-dlp Updates:** The app updates its downloader engine on startup (a stale yt-dlp was the main reason downloads suddenly stopped working). There is also an "Update yt-dlp" button in the UI.
+*   **Browser Cookie Support (no more manual exports):** Pick your browser from the new "Sign-in / Cookies" dropdown and the app reads your login cookies directly — no cookies.txt export needed. `cookies.txt` still works as a fallback.
+*   **More Reliable Downloads:** Vimeo downloads now fall back to yt-dlp when direct extraction fails, failed metadata lookups no longer abort the whole download, and cancelling now properly stops all background processes.
 
 ## Key Features
 
@@ -36,21 +37,26 @@ With its latest update, the application is now a **fully portable, double-click-
 ## Getting Started (The Easy Way)
 
 1.  Go to the [**Releases Page**](https://github.com/yzRobo/universal-video-downloader/releases).
-2.  Under the latest release, download the `Universal-Video-Downloader-vX.X.X.zip` file.
-3.  Unzip the folder to a location of your choice (e.g., your Desktop).
-4.  Open the unzipped folder and double-click **`UniversalVideoDownloader.exe`**.
+2.  Under the latest release, download **`UniversalVideoDownloader.exe`** — that's the only file you need.
+3.  Put it in a folder of your choice (e.g., a "Video Downloader" folder on your Desktop) and double-click it.
 
 That's it! A console window will appear, and your default web browser will open to `http://localhost:3000` automatically.
 
 ### First Time Running
 
+*   **One-time component download:** On first run, the app downloads its required tools (yt-dlp and ffmpeg, ~100 MB) into a `bin` folder it creates next to the exe. You'll see progress in the console. This only happens once.
 *   **Windows Security:** Windows Defender SmartScreen might show a warning because the app is not code-signed. This is normal. Click "**More info**" and then "**Run anyway**".
 *   **Firewall:** Your firewall may ask for permission for the app to access the network. Click "**Allow access**". This is required for it to function as a local server.
 
+### Staying Up To Date — Automatic
+
+*   **The app updates itself:** On startup it checks GitHub for a newer release. If one exists, a green banner appears in the web interface with an **"Update & Restart"** button — click it and the app downloads the new exe, swaps itself out, and restarts. No need to visit the repo again.
+*   **The downloader engine updates itself:** yt-dlp is updated automatically on every startup, so YouTube changes won't silently break your downloads.
+
 ### Important Notes
 *   The console window that opens is the server. **To stop the application, simply close this window.**
-*   Keep all files (`UniversalVideoDownloader.exe`, `bin/`, `downloads/`) in the same folder. Do not delete or move the `bin` folder, as it contains required tools.
-*   All your downloaded files will be saved in the `downloads` folder.
+*   The app creates `bin/` and `downloads/` folders next to the exe. Your downloaded videos are saved in `downloads`.
+*   Put the exe in its own folder (not directly on your Desktop) so those folders stay tidy.
 
 ## How to Use the Interface
 
@@ -64,22 +70,24 @@ That's it! A console window will appear, and your default web browser will open 
     *   Click "Start All Downloads".
     *   Monitor progress with real-time stats and cancel anytime if needed.
 
-### Using YouTube Cookies (For Age-Restricted Content)
+### Downloading Age-Restricted / Sign-in Required Videos
 
-To download age-restricted or sign-in required YouTube videos:
+Use the **"Sign-in / Cookies"** dropdown at the top of the page:
 
-1.  **Export YouTube cookies** from your browser:
-    *   Install a browser extension like "Get cookies.txt" or "cookies.txt"
-    *   Go to YouTube and sign in to your account
-    *   Use the extension to export cookies in Netscape format
-2.  **Save the cookies file:**
-    *   Name it exactly `cookies.txt` (case-sensitive)
-    *   Place it in the `downloads` folder of the application
-3.  **Run the downloader normally:**
-    *   The app will automatically detect and use the cookies
-    *   You'll see "Found cookies.txt file, will use for authentication" in the logs
+*   **Easiest way — use your browser login:** Select your browser (e.g. "Use my Firefox login"). The app reads your login cookies directly from the browser — no manual export needed. Just make sure you are signed in to the site (e.g. YouTube) in that browser.
+    *   Tip: Close the browser before starting the download for the most reliable read.
+    *   Note: Recent versions of Chrome block cookie access on Windows. If Chrome fails, use Firefox or the cookies.txt method below.
+*   **Fallback — cookies.txt file:** Leave the dropdown on "Automatic" and:
+    1.  Install a browser extension like "Get cookies.txt LOCALLY"
+    2.  Sign in to the site and export cookies in Netscape format
+    3.  Save the file as `cookies.txt` in the `downloads` folder (or next to the app)
+*   **No cookies:** Select "No cookies" to download without any authentication.
 
-The cookies will remain active for all YouTube downloads until you remove the file.
+Your choice is remembered between sessions.
+
+### Keeping the Downloader Working (yt-dlp Updates)
+
+Sites like YouTube change frequently, and an out-of-date downloader engine is the most common reason downloads suddenly stop working. This app now **updates yt-dlp automatically every time it starts**. You can also click the **"Update yt-dlp"** button in the UI at any time. The current yt-dlp version is shown next to the button.
 
 ### Advanced: Downloading Private/Embedded Videos
 
@@ -117,10 +125,10 @@ If you want to modify the code and build the executable yourself:
 
 ## Troubleshooting
 
-*   **Application closes immediately:** Make sure the `bin` folder with `yt-dlp.exe` and `ffmpeg.exe` is in the same directory as `UniversalVideoDownloader.exe`. If they are missing, try running `npm install` (if you're a developer) or re-downloading the release ZIP.
+*   **Application closes immediately or components fail to download:** The app needs internet access on first run to download yt-dlp and ffmpeg into its `bin` folder. Check your connection and firewall, then restart the app — it will retry automatically. Developers can also run `npm install` to fetch the binaries.
 *   **Antivirus/Firewall issues:** If the app is blocked, try temporarily disabling your antivirus or adding an exception for `UniversalVideoDownloader.exe` and the `bin` folder.
-*   **Downloads fail:** Check that the URL is correct. For private videos, ensure you are using "Private" mode with the correct referer domain.
-*   **Age-restricted YouTube videos:** Make sure you have a valid `cookies.txt` file in the downloads folder. The file must be in Netscape cookie format.
+*   **Downloads fail:** First click "Update yt-dlp" in the UI — an outdated downloader engine is the most common cause. Then check that the URL is correct. For private videos, ensure you are using "Private" mode with the correct referer domain.
+*   **Age-restricted YouTube videos:** Select your browser in the "Sign-in / Cookies" dropdown (and be signed in to YouTube in that browser), or provide a `cookies.txt` file in Netscape format in the downloads folder.
 *   **"Could not find an available port":** The app tries to use port 3000 and up. If this error occurs, another application is using all the ports it's trying. Close other development servers or applications and try again.
 
 ## Supported Sites
