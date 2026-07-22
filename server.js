@@ -12,23 +12,10 @@
   // Development mode detection
   const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev') || process.argv.includes('dev');
 
-  // When run as the packaged exe, relaunch minimized so the app window is
-  // front and center instead of a big console. The console stays in the
-  // taskbar — closing it stops the app.
-  if (typeof process.pkg !== 'undefined' && process.platform === 'win32' && !process.env.UVD_RELAUNCHED) {
-      try {
-          const child = spawn('cmd.exe',
-              ['/c', 'start', '"Universal Video Downloader — server (close to stop)"', '/min', `"${process.execPath}"`],
-              {
-                  detached: true,
-                  stdio: 'ignore',
-                  windowsVerbatimArguments: true,
-                  env: { ...process.env, UVD_RELAUNCHED: '1' }
-              });
-          child.unref();
-          process.exit(0);
-      } catch (e) { /* keep running in this window */ }
-  }
+  // Give the console window a clear title so it doesn't look like a stray
+  // terminal. (We deliberately do NOT relaunch/minimize the process — that
+  // made the first window flash and close, which looked like a crash.)
+  try { process.title = 'Universal Video Downloader (keep this open — close to stop)'; } catch (e) {}
 
   // Find a Chromium browser we can use for a dedicated app window (--app=
   // mode: no tabs or address bar, looks like a native app). Prefer one that
@@ -59,8 +46,9 @@
     const appBrowser = findAppModeBrowser();
     if (appBrowser) {
         try {
-            spawn(appBrowser, [`--app=${url}`], { detached: true, stdio: 'ignore' }).unref();
-            console.log('Opened the interface in its own window.');
+            const win = spawn(appBrowser, [`--app=${url}`, '--new-window'], { detached: true, stdio: 'ignore' });
+            win.on('error', () => {}); // never let a browser-launch error crash us
+            win.unref();
             return;
         } catch (e) { /* fall back to a normal browser tab below */ }
     }
@@ -979,9 +967,18 @@
                   }
                   
                   if (isPkg) {
-                      console.log("Opening your browser...");
-                      console.log("\nTo stop the server, close this window.");
-                      
+                      console.log("\n========================================================");
+                      console.log("  Universal Video Downloader is running.");
+                      console.log("");
+                      console.log("  A separate app window is opening in your browser.");
+                      console.log("  If it doesn't, open this address yourself:");
+                      console.log(`     ${url}`);
+                      console.log("");
+                      console.log("  ⚠ Keep THIS window open while you use the app.");
+                      console.log("    Closing this window stops the downloader.");
+                      console.log("    (You can minimize it.)");
+                      console.log("========================================================\n");
+
                       // Open browser after a short delay to ensure server is ready
                       setTimeout(() => {
                           openBrowser(url);
