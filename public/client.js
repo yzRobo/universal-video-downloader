@@ -26,11 +26,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // --- yt-dlp status / update ---
-    socket.on("ytdlp-status", ({ version, cookiesFile }) => {
+    socket.on("ytdlp-status", ({ version, cookiesFile, defaultBrowser }) => {
         ytdlpVersionSpan.textContent = version ? `yt-dlp: ${version}` : "yt-dlp: not found";
         cookieStatus.textContent = cookiesFile
             ? `✓ cookies.txt found (${cookiesFile})`
             : "No cookies.txt file found (only needed if you choose the Automatic option).";
+
+        // Point the user at the browser that actually holds their logins
+        if (defaultBrowser) {
+            const option = cookieSourceSelect.querySelector(`option[value="${defaultBrowser}"]`);
+            if (option && !option.dataset.annotated) {
+                option.dataset.annotated = "1";
+                option.textContent += " — your default browser";
+            }
+        }
     });
 
     updateYtdlpBtn.addEventListener("click", () => {
@@ -324,12 +333,29 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     
     // --- Socket Event Listeners ---
-    socket.on("log", (data) => {
+    const appendLog = (data) => {
         const logEntry = document.createElement("div");
         logEntry.textContent = data.message;
         if (data.type) logEntry.classList.add(`log-${data.type}`);
         logOutput.appendChild(logEntry);
         logOutput.scrollTop = logOutput.scrollHeight;
+    };
+
+    socket.on("log", appendLog);
+
+    // Replay of activity we missed (e.g. the page was closed while the
+    // browser had to quit so its cookies could be read)
+    socket.on("log-replay", ({ logs, active }) => {
+        if (!logs || logs.length === 0 || logOutput.childElementCount > 0) return;
+        resultsContainer.classList.remove("hidden");
+        resultsContainer.classList.remove("logs-hidden");
+        toggleLogsBtn.textContent = "Hide Logs";
+        appendLog({ type: "info", message: "--- Reconnected: showing activity from while this page was closed ---" });
+        logs.forEach(appendLog);
+        if (active) {
+            cancelBtn.disabled = false;
+            cancelBtn.textContent = "Cancel All";
+        }
     });
     
     socket.on("new-batch-starting", ({ batchIndex, totalVideos }) => {

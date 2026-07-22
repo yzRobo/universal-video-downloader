@@ -237,6 +237,45 @@
       });
   }
 
+  // Poll until the process exits (user closing their browser) or timeout
+  async function waitForProcessExit(exeName, timeoutMs, onTick) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+          if (isCancelled) return false;
+          if (!(await isProcessRunning(exeName))) return true;
+          if (onTick) onTick(Math.round((deadline - Date.now()) / 1000));
+          await new Promise(r => setTimeout(r, 3000));
+      }
+      return !(await isProcessRunning(exeName));
+  }
+
+  // Detect the user's default browser from the registry so the UI can point
+  // them at the cookie source that actually holds their logins
+  let defaultBrowser = null;
+  function getDefaultBrowser() {
+      return new Promise((resolve) => {
+          if (platform !== 'win32') return resolve(null);
+          const proc = spawn('reg', ['query',
+              'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice',
+              '/v', 'ProgId'], { windowsHide: true });
+          let out = '';
+          proc.stdout.on('data', (d) => out += d.toString());
+          proc.on('close', () => {
+              const match = out.match(/ProgId\s+REG_SZ\s+(\S+)/);
+              if (!match) return resolve(null);
+              const progId = match[1].toLowerCase();
+              if (progId.includes('brave')) return resolve('brave');
+              if (progId.includes('firefox')) return resolve('firefox');
+              if (progId.includes('edge') || progId.includes('msedge')) return resolve('edge');
+              if (progId.includes('opera')) return resolve('opera');
+              if (progId.includes('vivaldi')) return resolve('vivaldi');
+              if (progId.includes('chrome')) return resolve('chrome');
+              resolve(null);
+          });
+          proc.on('error', () => resolve(null));
+      });
+  }
+
   // Translate cryptic yt-dlp failures into instructions a user can act on.
   // Returns null when there is no better explanation than the raw output.
   function friendlyYtDlpError(text, cookieSource) {
@@ -247,8 +286,13 @@
                  `Alternatively, switch the Sign-in / Cookies dropdown to Firefox or a cookies.txt file.`;
       }
       if (/DPAPI|App.?Bound/i.test(text)) {
-          return `Windows blocked reading ${displayBrowserName(cookieSource)}'s cookies (newer Chromium versions encrypt them against outside access). ` +
-                 `Use Firefox (recommended) or a cookies.txt file instead.`;
+          const b = displayBrowserName(cookieSource);
+          const suggestion = defaultBrowser && defaultBrowser !== cookieSource
+              ? `Your default browser appears to be ${displayBrowserName(defaultBrowser)} — select "${displayBrowserName(defaultBrowser)}" in the Sign-in / Cookies dropdown instead. `
+              : '';
+          return `${b}'s cookies cannot be read on Windows — newer Chrome versions encrypt them against all outside tools, even while Chrome is closed. ` +
+                 suggestion +
+                 `Otherwise use Firefox, Brave, or a cookies.txt file.`;
       }
       if (/Sign in to confirm|not a bot|age.?restricted|login required/i.test(text)) {
           return `This video requires being signed in. Pick your browser in the Sign-in / Cookies dropdown (Firefox is the most reliable) and make sure you are logged in to the site there.`;
@@ -514,10 +558,16 @@
           broadcastLog('success', '✓ Update downloaded. Restarting the application...');
           io.emit('app-update-installing');
 
-          const child = spawn('cmd.exe', ['/c', 'start', 'Updating...', '/min', updaterPath], {
+          // windowsVerbatimArguments: the command line must be exact — `start`
+          // treats its first QUOTED argument as the window title, and Node's
+          // default quoting broke that (it launched a program named
+          // "Updating..." instead of the batch file).
+          const child = spawn('cmd.exe',
+              ['/c', 'start', '"Updating Universal Video Downloader"', '/min', `"${updaterPath}"`], {
               detached: true,
               stdio: 'ignore',
-              cwd: basePath
+              cwd: basePath,
+              windowsVerbatimArguments: true
           });
           child.unref();
 
@@ -599,6 +649,13 @@
   // exe), then self-update yt-dlp so YouTube extractor changes don't silently
   // break downloads, then check GitHub for a newer app release.
   (async () => {
+      // Clean up leftovers from any previous (possibly interrupted) update
+      try { fs.rmSync(path.join(basePath, 'update-uvd.bat'), { force: true }); } catch (e) {}
+      try { fs.rmSync(process.execPath + '.new', { force: true }); } catch (e) {}
+
+      defaultBrowser = await getDefaultBrowser();
+      if (defaultBrowser) console.log('Default browser detected:', displayBrowserName(defaultBrowser));
+
       const bootstrapped = await ensureBinaries();
       binariesReadyResolve(bootstrapped);
 
@@ -613,7 +670,7 @@
               } else {
                   console.log('yt-dlp is up to date or could not be updated.');
               }
-              io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile() });
+              io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser });
           }
       }
 
@@ -659,6 +716,21 @@
   let activeProcess = null;
   let isDownloading = false;
   let currentCookieArgs = { args: [], description: null };
+
+  // Recent log lines are replayed to clients that (re)connect mid-download —
+  // e.g. after the user closed their browser so its cookies could be read
+  const recentLogs = [];
+  function makeSessionEmitter(socket) {
+      return {
+          emit(event, payload) {
+              if (event === 'log') {
+                  recentLogs.push(payload);
+                  if (recentLogs.length > 300) recentLogs.shift();
+              }
+              socket.emit(event, payload);
+          }
+      };
+  }
   
   // --- Platform Detection ---
   function detectPlatform(url) {
@@ -683,8 +755,14 @@
     }
   
     // Tell the client what we know as soon as it connects
-    socket.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile() });
+    socket.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser });
     socket.emit('app-update-status', lastAppUpdateStatus);
+
+    // Replay recent activity for clients that (re)connect mid-session, e.g.
+    // after closing their browser to let cookie extraction work
+    if (recentLogs.length > 0) {
+        socket.emit('log-replay', { logs: recentLogs, active: isDownloading });
+    }
 
     socket.on("check-app-update", async () => {
       await checkForAppUpdate();
@@ -719,20 +797,37 @@
       console.log("Received download request with batches:", data.batches.length);
       isCancelled = false;
       isDownloading = true;
+      recentLogs.length = 0;
+      const emitter = makeSessionEmitter(socket);
       currentCookieArgs = resolveCookieArgs(data.cookieSource);
       currentCookieArgs.source = data.cookieSource;
       if (currentCookieArgs.description) {
-          socket.emit("log", { type: 'info', message: `Authentication: using ${currentCookieArgs.description}` });
+          emitter.emit("log", { type: 'info', message: `Authentication: using ${currentCookieArgs.description}` });
       }
 
-      // Warn up front if the chosen browser is open: Windows locks its cookie
-      // database while it runs, and cookie extraction will fail.
-      const browserExe = CHROMIUM_BROWSER_PROCESSES[data.cookieSource];
-      if (browserExe && await isProcessRunning(browserExe)) {
-          socket.emit("log", { type: 'warning', message: `⚠ ${displayBrowserName(data.cookieSource)} is currently open. Its cookies are locked while it runs — if the download fails, close ${displayBrowserName(data.cookieSource)} completely (including the tray icon) and try again.` });
-      }
       try {
-          await processAllBatches(data.batches, socket);
+          // Chromium browsers lock their cookies while running — and the UI
+          // itself usually runs inside that browser. So instead of failing,
+          // wait: the user closes the browser, downloads start automatically,
+          // and the server keeps running without the page open.
+          const browserExe = CHROMIUM_BROWSER_PROCESSES[data.cookieSource];
+          if (browserExe && await isProcessRunning(browserExe)) {
+              const bName = displayBrowserName(data.cookieSource);
+              emitter.emit("log", { type: 'warning', message: `⚠ ${bName} is open, and Windows locks its cookies while it runs.` });
+              emitter.emit("log", { type: 'info', message: `→ Close ${bName} now — every window, and its tray icon if it has one. The download will start by itself a few seconds after ${bName} closes and will keep running in the background.` });
+              emitter.emit("log", { type: 'info', message: `→ You can reopen ${bName} right after; this page will reload and show the progress. Files are saved to the downloads folder either way. (Waiting up to 3 minutes...)` });
+              const closed = await waitForProcessExit(browserExe, 180000);
+              if (isCancelled) {
+                  emitter.emit("all-batches-complete", { cancelled: true });
+                  return;
+              }
+              if (closed) {
+                  emitter.emit("log", { type: 'success', message: `✓ ${bName} closed — starting downloads.` });
+              } else {
+                  emitter.emit("log", { type: 'warning', message: `⚠ ${bName} still appears to be running — trying anyway, but cookie access will likely fail until it is fully closed.` });
+              }
+          }
+          await processAllBatches(data.batches, emitter);
       } finally {
           isDownloading = false;
       }
@@ -747,7 +842,7 @@
       socket.emit("log", { type: 'info', message: 'Checking for yt-dlp updates...' });
       const result = await updateYtDlp((line) => socket.emit("log", { type: 'info', message: `yt-dlp: ${line}` }));
       socket.emit("ytdlp-update-complete", { updated: result.updated, version: result.version || ytDlpVersion });
-      io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile() });
+      io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser });
     });
 
     socket.on("cancel-download", () => {
