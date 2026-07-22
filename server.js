@@ -11,11 +11,60 @@
   
   // Development mode detection
   const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev') || process.argv.includes('dev');
-  
-  // Function to open browser
+
+  // When run as the packaged exe, relaunch minimized so the app window is
+  // front and center instead of a big console. The console stays in the
+  // taskbar — closing it stops the app.
+  if (typeof process.pkg !== 'undefined' && process.platform === 'win32' && !process.env.UVD_RELAUNCHED) {
+      try {
+          const child = spawn('cmd.exe',
+              ['/c', 'start', '"Universal Video Downloader — server (close to stop)"', '/min', `"${process.execPath}"`],
+              {
+                  detached: true,
+                  stdio: 'ignore',
+                  windowsVerbatimArguments: true,
+                  env: { ...process.env, UVD_RELAUNCHED: '1' }
+              });
+          child.unref();
+          process.exit(0);
+      } catch (e) { /* keep running in this window */ }
+  }
+
+  // Find a Chromium browser we can use for a dedicated app window (--app=
+  // mode: no tabs or address bar, looks like a native app). Prefer one that
+  // is NOT the user's default browser, so closing their main browser (to
+  // unlock its cookies for downloads) doesn't take the app window with it.
+  function findAppModeBrowser() {
+      if (process.platform !== 'win32') return null;
+      const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+      const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+      const lad = process.env['LOCALAPPDATA'] || '';
+      const candidates = [
+          { source: 'edge', exe: path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe') },
+          { source: 'edge', exe: path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe') },
+          { source: 'chrome', exe: path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe') },
+          { source: 'chrome', exe: path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe') },
+          { source: 'brave', exe: path.join(pf, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe') },
+          { source: 'brave', exe: path.join(lad, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe') }
+      ].filter(c => { try { return fs.existsSync(c.exe); } catch (e) { return false; } });
+      if (candidates.length === 0) return null;
+      const nonDefault = candidates.find(c => c.source !== defaultBrowser);
+      return (nonDefault || candidates[0]).exe;
+  }
+
+  // Open the UI — as its own dedicated app window when possible
   function openBrowser(url) {
     const { exec } = require('child_process');
-    
+
+    const appBrowser = findAppModeBrowser();
+    if (appBrowser) {
+        try {
+            spawn(appBrowser, [`--app=${url}`], { detached: true, stdio: 'ignore' }).unref();
+            console.log('Opened the interface in its own window.');
+            return;
+        } catch (e) { /* fall back to a normal browser tab below */ }
+    }
+
     switch (process.platform) {
         case 'win32':
             exec(`start ${url}`);
@@ -301,12 +350,21 @@
   }
 
   // Turn the UI's cookie-source choice into yt-dlp arguments.
-  // Returns { args: [...], description: string }
+  // Returns { args: [...], description: string, warning?: string }
   function resolveCookieArgs(cookieSource) {
       const source = cookieSource || 'auto';
 
       if (source === 'none') {
           return { args: [], description: null };
+      }
+
+      // Chrome 127+ encrypts its cookies against all outside tools on
+      // Windows, even while Chrome is closed — it simply cannot work
+      if (source === 'chrome' && platform === 'win32') {
+          return {
+              args: [], description: null,
+              warning: `Chrome's cookies can't be read on Windows (Chrome blocks all outside tools, even while closed). Downloading WITHOUT sign-in. For restricted videos, pick Brave, Firefox, or a cookies.txt file.`
+          };
       }
 
       if (SUPPORTED_COOKIE_BROWSERS.includes(source)) {
@@ -537,6 +595,39 @@
               throw new Error('Downloaded update looks too small; aborting.');
           }
 
+          broadcastLog('success', '✓ Update downloaded. Installing and restarting...');
+          io.emit('app-update-installing');
+
+          // Preferred: silent swap. Windows allows RENAMING a running exe
+          // (only deleting/overwriting is blocked), so we rename ourselves
+          // aside, move the new exe into place, and relaunch — no batch
+          // window, no visible machinery. The .old file is cleaned up on the
+          // next startup.
+          try {
+              const oldPath = exePath + '.old';
+              try { fs.rmSync(oldPath, { force: true }); } catch (e) {}
+              fs.renameSync(exePath, oldPath);
+              fs.renameSync(newExePath, exePath);
+
+              // Relaunch after a short delay (hidden helper, no window) so
+              // this process has released its port first
+              const child = spawn('cmd.exe',
+                  ['/c', `timeout /t 2 /nobreak >nul & start "" "${exePath}"`], {
+                  detached: true,
+                  stdio: 'ignore',
+                  cwd: basePath,
+                  windowsHide: true,
+                  windowsVerbatimArguments: true
+              });
+              child.unref();
+              setTimeout(() => process.exit(0), 1000);
+              return true;
+          } catch (renameErr) {
+              // Fallback (e.g. antivirus blocking the rename): minimized
+              // batch script that waits for us to exit and swaps the files
+              console.log('Silent swap failed, using fallback updater:', renameErr.message);
+          }
+
           const batch = [
               '@echo off',
               'title Updating Universal Video Downloader',
@@ -555,13 +646,6 @@
           ].join('\r\n');
           fs.writeFileSync(updaterPath, batch);
 
-          broadcastLog('success', '✓ Update downloaded. Restarting the application...');
-          io.emit('app-update-installing');
-
-          // windowsVerbatimArguments: the command line must be exact — `start`
-          // treats its first QUOTED argument as the window title, and Node's
-          // default quoting broke that (it launched a program named
-          // "Updating..." instead of the batch file).
           const child = spawn('cmd.exe',
               ['/c', 'start', '"Updating Universal Video Downloader"', '/min', `"${updaterPath}"`], {
               detached: true,
@@ -652,6 +736,7 @@
       // Clean up leftovers from any previous (possibly interrupted) update
       try { fs.rmSync(path.join(basePath, 'update-uvd.bat'), { force: true }); } catch (e) {}
       try { fs.rmSync(process.execPath + '.new', { force: true }); } catch (e) {}
+      try { fs.rmSync(process.execPath + '.old', { force: true }); } catch (e) {}
 
       defaultBrowser = await getDefaultBrowser();
       if (defaultBrowser) console.log('Default browser detected:', displayBrowserName(defaultBrowser));
@@ -670,7 +755,7 @@
               } else {
                   console.log('yt-dlp is up to date or could not be updated.');
               }
-              io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser });
+              io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser, platform });
           }
       }
 
@@ -755,7 +840,7 @@
     }
   
     // Tell the client what we know as soon as it connects
-    socket.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser });
+    socket.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser, platform });
     socket.emit('app-update-status', lastAppUpdateStatus);
 
     // Replay recent activity for clients that (re)connect mid-session, e.g.
@@ -792,6 +877,7 @@
       }
       if (isDownloading) {
           socket.emit("log", { type: 'error', message: 'A download is already in progress. Please wait for it to finish or cancel it.' });
+          socket.emit("action-required", { message: '⚠ The app is still busy with the previous download request (it may be waiting for a browser to close). Click "Cancel All" to stop it, or wait for it to finish, then try again.' });
           return;
       }
       console.log("Received download request with batches:", data.batches.length);
@@ -804,6 +890,9 @@
       if (currentCookieArgs.description) {
           emitter.emit("log", { type: 'info', message: `Authentication: using ${currentCookieArgs.description}` });
       }
+      if (currentCookieArgs.warning) {
+          emitter.emit("log", { type: 'warning', message: `⚠ ${currentCookieArgs.warning}` });
+      }
 
       try {
           // Chromium browsers lock their cookies while running — and the UI
@@ -813,10 +902,11 @@
           const browserExe = CHROMIUM_BROWSER_PROCESSES[data.cookieSource];
           if (browserExe && await isProcessRunning(browserExe)) {
               const bName = displayBrowserName(data.cookieSource);
-              emitter.emit("log", { type: 'warning', message: `⚠ ${bName} is open, and Windows locks its cookies while it runs.` });
-              emitter.emit("log", { type: 'info', message: `→ Close ${bName} now — every window, and its tray icon if it has one. The download will start by itself a few seconds after ${bName} closes and will keep running in the background.` });
-              emitter.emit("log", { type: 'info', message: `→ You can reopen ${bName} right after; this page will reload and show the progress. Files are saved to the downloads folder either way. (Waiting up to 3 minutes...)` });
+              const instructions = `Close ${bName} now — every window, and its tray icon if it has one. The download starts by itself a few seconds after ${bName} closes and keeps running in the background. You can reopen ${bName} right after; this page will show the progress. (Waiting up to 3 minutes...)`;
+              emitter.emit("action-required", { message: `🔒 ${bName} is open, and Windows locks its cookies while it runs. ${instructions}` });
+              emitter.emit("log", { type: 'warning', message: `⚠ ${bName} is open — waiting for it to close so its cookies can be read...` });
               const closed = await waitForProcessExit(browserExe, 180000);
+              emitter.emit("action-clear");
               if (isCancelled) {
                   emitter.emit("all-batches-complete", { cancelled: true });
                   return;
@@ -842,7 +932,7 @@
       socket.emit("log", { type: 'info', message: 'Checking for yt-dlp updates...' });
       const result = await updateYtDlp((line) => socket.emit("log", { type: 'info', message: `yt-dlp: ${line}` }));
       socket.emit("ytdlp-update-complete", { updated: result.updated, version: result.version || ytDlpVersion });
-      io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser });
+      io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser, platform });
     });
 
     socket.on("cancel-download", () => {
@@ -1071,6 +1161,7 @@
                 if (/cookie database|DPAPI|App.?Bound/i.test(errorOutput)) {
                     const friendly = friendlyYtDlpError(errorOutput, currentCookieArgs.source);
                     socket.emit("log", { type: "error", message: `${logPrefix} ${friendly}` });
+                    socket.emit("action-required", { message: `❌ ${friendly}` });
                     socket.emit("progress", { index, status: `❌ Close ${displayBrowserName(currentCookieArgs.source)} and retry` });
                     return;
                 }

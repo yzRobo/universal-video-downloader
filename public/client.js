@@ -25,17 +25,43 @@ document.addEventListener("DOMContentLoaded", () => {
         localStorage.setItem("cookieSource", cookieSourceSelect.value);
     });
 
+    // --- Action banner: instructions the user must see (not buried in logs) ---
+    const actionBanner = document.getElementById("action-banner");
+    const actionBannerText = document.getElementById("action-banner-text");
+    const showActionBanner = (message) => {
+        actionBannerText.textContent = message;
+        actionBanner.classList.remove("hidden");
+    };
+    const hideActionBanner = () => actionBanner.classList.add("hidden");
+    socket.on("action-required", ({ message }) => showActionBanner(message));
+    socket.on("action-clear", hideActionBanner);
+
     // --- yt-dlp status / update ---
-    socket.on("ytdlp-status", ({ version, cookiesFile, defaultBrowser }) => {
+    socket.on("ytdlp-status", ({ version, cookiesFile, defaultBrowser, platform }) => {
         ytdlpVersionSpan.textContent = version ? `yt-dlp: ${version}` : "yt-dlp: not found";
         cookieStatus.textContent = cookiesFile
             ? `✓ cookies.txt found (${cookiesFile})`
             : "No cookies.txt file found (only needed if you choose the Automatic option).";
 
+        // Chrome's cookies cannot be read on Windows (Chrome encrypts them
+        // against outside tools, even while closed)
+        if (platform === "win32") {
+            const chromeOption = cookieSourceSelect.querySelector('option[value="chrome"]');
+            if (chromeOption && !chromeOption.disabled) {
+                chromeOption.disabled = true;
+                chromeOption.textContent = "Chrome — not supported on Windows";
+                if (cookieSourceSelect.value === "chrome") {
+                    const fallback = (defaultBrowser && defaultBrowser !== "chrome") ? defaultBrowser : "auto";
+                    cookieSourceSelect.value = fallback;
+                    localStorage.setItem("cookieSource", fallback);
+                }
+            }
+        }
+
         // Point the user at the browser that actually holds their logins
         if (defaultBrowser) {
             const option = cookieSourceSelect.querySelector(`option[value="${defaultBrowser}"]`);
-            if (option && !option.dataset.annotated) {
+            if (option && !option.dataset.annotated && !option.disabled) {
                 option.dataset.annotated = "1";
                 option.textContent += " — your default browser";
             }
@@ -393,5 +419,9 @@ document.addEventListener("DOMContentLoaded", () => {
         document.querySelectorAll('input, button, select').forEach(el => el.disabled = false);
         document.querySelectorAll('.download-section').forEach(sec => sec.classList.remove('active'));
         cancelBtn.disabled = true;
+        hideActionBanner();
+        // Chrome stays unsupported on Windows even after controls re-enable
+        const chromeOption = cookieSourceSelect.querySelector('option[value="chrome"]');
+        if (chromeOption && chromeOption.textContent.includes("not supported")) chromeOption.disabled = true;
     });
 });

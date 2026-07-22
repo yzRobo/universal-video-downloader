@@ -1308,6 +1308,20 @@ button:disabled {
     font-weight: 600;
 }
 
+/* Action banner — instructions the user must act on right now */
+#action-banner {
+    background: rgba(245, 158, 11, 0.12);
+    border: 2px solid rgba(245, 158, 11, 0.5);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-lg);
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    animation: gentle-pulse 2s ease-in-out infinite;
+}
+
 /* Settings bar (cookies / yt-dlp update) */
 .settings-bar {
     display: flex;
