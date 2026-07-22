@@ -210,6 +210,52 @@
 
   const SUPPORTED_COOKIE_BROWSERS = ['firefox', 'chrome', 'edge', 'brave', 'opera', 'vivaldi', 'chromium'];
 
+  // Chromium-based browsers lock their cookie database while running, which
+  // makes --cookies-from-browser fail on Windows (yt-dlp issue #7271)
+  const CHROMIUM_BROWSER_PROCESSES = {
+      chrome: 'chrome.exe',
+      chromium: 'chrome.exe',
+      brave: 'brave.exe',
+      edge: 'msedge.exe',
+      opera: 'opera.exe',
+      vivaldi: 'vivaldi.exe'
+  };
+
+  function displayBrowserName(source) {
+      const names = { chrome: 'Chrome', chromium: 'Chromium', brave: 'Brave', edge: 'Microsoft Edge', opera: 'Opera', vivaldi: 'Vivaldi', firefox: 'Firefox' };
+      return names[source] || source;
+  }
+
+  function isProcessRunning(exeName) {
+      return new Promise((resolve) => {
+          if (platform !== 'win32') return resolve(false);
+          const proc = spawn('tasklist', ['/FI', `IMAGENAME eq ${exeName}`, '/NH'], { windowsHide: true });
+          let out = '';
+          proc.stdout.on('data', (d) => out += d.toString());
+          proc.on('close', () => resolve(out.toLowerCase().includes(exeName.toLowerCase())));
+          proc.on('error', () => resolve(false));
+      });
+  }
+
+  // Translate cryptic yt-dlp failures into instructions a user can act on.
+  // Returns null when there is no better explanation than the raw output.
+  function friendlyYtDlpError(text, cookieSource) {
+      if (/Could not copy .*cookie database/i.test(text)) {
+          const browser = displayBrowserName(cookieSource);
+          return `${browser} is locking its cookie database because it is still running. ` +
+                 `Close ${browser} COMPLETELY — including the system tray icon (in ${browser} settings, disable "Continue running background apps" if enabled) — then click Start again. ` +
+                 `Alternatively, switch the Sign-in / Cookies dropdown to Firefox or a cookies.txt file.`;
+      }
+      if (/DPAPI|App.?Bound/i.test(text)) {
+          return `Windows blocked reading ${displayBrowserName(cookieSource)}'s cookies (newer Chromium versions encrypt them against outside access). ` +
+                 `Use Firefox (recommended) or a cookies.txt file instead.`;
+      }
+      if (/Sign in to confirm|not a bot|age.?restricted|login required/i.test(text)) {
+          return `This video requires being signed in. Pick your browser in the Sign-in / Cookies dropdown (Firefox is the most reliable) and make sure you are logged in to the site there.`;
+      }
+      return null;
+  }
+
   // Turn the UI's cookie-source choice into yt-dlp arguments.
   // Returns { args: [...], description: string }
   function resolveCookieArgs(cookieSource) {
@@ -674,8 +720,16 @@
       isCancelled = false;
       isDownloading = true;
       currentCookieArgs = resolveCookieArgs(data.cookieSource);
+      currentCookieArgs.source = data.cookieSource;
       if (currentCookieArgs.description) {
           socket.emit("log", { type: 'info', message: `Authentication: using ${currentCookieArgs.description}` });
+      }
+
+      // Warn up front if the chosen browser is open: Windows locks its cookie
+      // database while it runs, and cookie extraction will fail.
+      const browserExe = CHROMIUM_BROWSER_PROCESSES[data.cookieSource];
+      if (browserExe && await isProcessRunning(browserExe)) {
+          socket.emit("log", { type: 'warning', message: `⚠ ${displayBrowserName(data.cookieSource)} is currently open. Its cookies are locked while it runs — if the download fails, close ${displayBrowserName(data.cookieSource)} completely (including the tray icon) and try again.` });
       }
       try {
           await processAllBatches(data.batches, socket);
@@ -916,6 +970,15 @@
             });
 
             if (infoCode !== 0) {
+                // Cookie-extraction failures are guaranteed to fail the real
+                // download too — stop now with instructions instead of
+                // failing twice with a cryptic error.
+                if (/cookie database|DPAPI|App.?Bound/i.test(errorOutput)) {
+                    const friendly = friendlyYtDlpError(errorOutput, currentCookieArgs.source);
+                    socket.emit("log", { type: "error", message: `${logPrefix} ${friendly}` });
+                    socket.emit("progress", { index, status: `❌ Close ${displayBrowserName(currentCookieArgs.source)} and retry` });
+                    return;
+                }
                 socket.emit("log", { type: "warning", message: `${logPrefix} Could not pre-fetch video info (continuing anyway). ${errorOutput.trim().split('\n').pop() || ''}` });
                 videoInfoJson = '';
             }
@@ -1060,10 +1123,16 @@
             }
         });
   
+        let friendlyErrorSent = false;
         activeProcess.stderr.on('data', (data) => {
             const error = data.toString();
             if (!error.includes('WARNING')) {
                 socket.emit("log", { type: 'error', message: `${logPrefix} ${error}` });
+                const friendly = friendlyYtDlpError(error, currentCookieArgs.source);
+                if (friendly && !friendlyErrorSent) {
+                    friendlyErrorSent = true;
+                    socket.emit("log", { type: 'error', message: `${logPrefix} 💡 ${friendly}` });
+                }
             }
         });
   
