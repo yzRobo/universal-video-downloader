@@ -36,6 +36,17 @@ document.addEventListener("DOMContentLoaded", () => {
     socket.on("action-required", ({ message }) => showActionBanner(message));
     socket.on("action-clear", hideActionBanner);
 
+    // First-run component download (there's no console window to watch)
+    socket.on("bootstrap-status", ({ active, failed, message }) => {
+        if (active || failed) {
+            showActionBanner(message);
+            submitBtn.disabled = !!active;
+        } else {
+            hideActionBanner();
+            submitBtn.disabled = false;
+        }
+    });
+
     // --- yt-dlp status / update ---
     socket.on("ytdlp-status", ({ version, cookiesFile, defaultBrowser, platform }) => {
         ytdlpVersionSpan.textContent = version ? `yt-dlp: ${version}` : "yt-dlp: not found";
@@ -66,6 +77,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 option.textContent += " — your default browser";
             }
         }
+    });
+
+    // --- Quit button: cleanly stop the background app (no console to close) ---
+    const quitBtn = document.getElementById("quit-btn");
+    quitBtn.addEventListener("click", () => {
+        if (confirm("Quit Universal Video Downloader? Any in-progress downloads will stop.")) {
+            socket.emit("quit-app");
+        }
+    });
+    socket.on("app-quitting", () => {
+        document.body.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.3rem;color:#e2e8f0;text-align:center;padding:2rem;">' +
+            'Universal Video Downloader has closed.<br>You can close this tab.</div>';
     });
 
     updateYtdlpBtn.addEventListener("click", () => {

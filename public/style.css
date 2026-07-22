@@ -1348,6 +1348,22 @@ button:disabled {
     flex-shrink: 0;
 }
 
+.settings-btn-row {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+#quit-btn {
+    border-color: rgba(239, 68, 68, 0.4);
+    color: var(--error-light);
+}
+
+#quit-btn:hover:not(:disabled) {
+    background: var(--error);
+    border-color: var(--error);
+    color: white;
+}
+
 .settings-hint {
     color: var(--text-muted);
     font-size: 0.8rem;

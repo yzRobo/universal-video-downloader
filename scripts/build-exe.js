@@ -45,28 +45,37 @@ try {
     console.log(`Executable created: dist\\${outputName}`);
     console.log(`Size: ${(fs.statSync(path.join(distDir, outputName)).size / 1024 / 1024).toFixed(1)} MB`);
 
+    // Flip console → GUI subsystem so no terminal window appears on launch
+    console.log('\nPatching to GUI subsystem (no console window)...');
+    execSync(`node "${path.join(__dirname, 'patch-subsystem.js')}" "${path.join(distDir, outputName)}"`, {
+        stdio: 'inherit'
+    });
+
     const readmeContent = `# Universal Video Downloader - Portable Version
 
 ## How to Use
 Simply double-click "UniversalVideoDownloader.exe" to start the application.
 Your default web browser will automatically open to the interface.
 
-The exe is fully self-contained: on first run it downloads its required
-components (yt-dlp and ffmpeg) into a "bin" folder next to itself, and
-creates a "downloads" folder for your files. After that, everything is
-kept up to date automatically:
+The exe is fully self-contained and runs with NO terminal window. On
+first run it downloads its required components (yt-dlp and ffmpeg) into a
+"bin" folder next to itself, and creates a "downloads" folder for your
+files. After that, everything is kept up to date automatically:
 - yt-dlp updates itself every time the app starts
 - The app checks GitHub for new releases and can update itself from the UI
 
 ## First Time Use
 1. Windows may show a security warning - click "More info" then "Run anyway"
 2. Your firewall may ask for permission - click "Allow"
-3. The first start downloads ~100 MB of components (one time only)
-4. Your browser opens automatically to http://localhost:3000
+3. The first start downloads ~100 MB of components (one time only). The app
+   window will show setup progress; it is ready in about a minute.
+4. Your app window opens automatically.
 
 ## Closing the Application
-To properly close the application, close the console window that appears
-when you run the exe.`;
+Close the app window/tab. To fully stop the background server, use the
+"Quit" behavior of the app, or end "UniversalVideoDownloader.exe" from
+Task Manager. A "uvd-log.txt" file next to the exe records activity if you
+ever need to troubleshoot.`;
 
     fs.writeFileSync(path.join(distDir, 'README.txt'), readmeContent);
     console.log('✓ Created README.txt');

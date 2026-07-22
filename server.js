@@ -8,14 +8,42 @@
   const express = require("express");
   const { createServer } = require("http");
   const { Server } = require("socket.io");
-  
+
+  // The packaged exe is built with the Windows GUI subsystem so no terminal
+  // window ever appears. That means there is no console for output, so send
+  // everything to a log file next to the exe and make sure a failed write to
+  // the (now non-existent) stdout can never crash the app.
+  const _isPkgEarly = typeof process.pkg !== 'undefined';
+  if (_isPkgEarly) {
+      try {
+          const logDir = path.dirname(process.execPath);
+          const logPath = path.join(logDir, 'uvd-log.txt');
+          const logStream = fs.createWriteStream(logPath, { flags: 'w' });
+          const toLine = (args) => args.map(a => (typeof a === 'string' ? a : require('util').inspect(a))).join(' ');
+          const writeLog = (...args) => { try { logStream.write(toLine(args) + '\n'); } catch (e) { /* ignore */ } };
+          console.log = writeLog;
+          console.error = writeLog;
+          console.warn = writeLog;
+          console.info = writeLog;
+          // Standard handles are invalid under the GUI subsystem — swallow errors
+          try { process.stdout.on('error', () => {}); } catch (e) {}
+          try { process.stderr.on('error', () => {}); } catch (e) {}
+      } catch (e) { /* logging is best-effort */ }
+  }
+
   // Development mode detection
   const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev') || process.argv.includes('dev');
 
-  // Give the console window a clear title so it doesn't look like a stray
-  // terminal. (We deliberately do NOT relaunch/minimize the process — that
-  // made the first window flash and close, which looked like a crash.)
-  try { process.title = 'Universal Video Downloader (keep this open — close to stop)'; } catch (e) {}
+  // Best-effort native popup for fatal errors, since there is no console to
+  // print them to in the GUI-subsystem exe
+  function showErrorDialog(message) {
+      if (process.platform !== 'win32') { console.error(message); return; }
+      try {
+          spawn('powershell', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
+              `Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show(${JSON.stringify(message)}, 'Universal Video Downloader')`],
+              { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      } catch (e) { /* nothing more we can do */ }
+  }
 
   // Find a Chromium browser we can use for a dedicated app window (--app=
   // mode: no tabs or address bar, looks like a native app). Prefer one that
@@ -470,6 +498,10 @@
       await pipeline(Readable.fromWeb(response.body), progress, fs.createWriteStream(dest));
   }
 
+  // First-run bootstrap status, mirrored to the UI banner since there is no
+  // console window to watch during the ~100 MB one-time download
+  let bootstrapStatus = null; // { active, message } | null
+
   async function ensureBinaries() {
       const binDir = path.join(basePath, 'bin');
       const needed = [
@@ -480,16 +512,22 @@
       if (needed.length === 0) return true;
 
       fs.mkdirSync(binDir, { recursive: true });
+      bootstrapStatus = { active: true, message: 'Setting up for first use — downloading required components (about 100 MB). This happens only once; the app will be ready in a minute…' };
+      io.emit('bootstrap-status', bootstrapStatus);
       broadcastLog('info', `First run: downloading required components (${needed.map(b => b.name).join(', ')}). This happens only once...`);
 
       for (const binary of needed) {
           const url = BINARY_SOURCES[binary.name][platform];
           if (!url) {
               broadcastLog('error', `No download source for ${binary.name} on ${platform}.`);
+              bootstrapStatus = { active: false, failed: true, message: `Could not set up ${binary.name} on ${platform}.` };
+              io.emit('bootstrap-status', bootstrapStatus);
               return false;
           }
           const tempPath = binary.target + '.download';
           try {
+              bootstrapStatus = { active: true, message: `Setting up for first use — downloading ${binary.name}… (one-time, about 100 MB total)` };
+              io.emit('bootstrap-status', bootstrapStatus);
               broadcastLog('info', `Downloading ${binary.name}...`);
               await downloadToFile(url, tempPath, binary.name);
               fs.renameSync(tempPath, binary.target);
@@ -498,9 +536,14 @@
           } catch (err) {
               try { fs.rmSync(tempPath, { force: true }); } catch (e) {}
               broadcastLog('error', `✗ Failed to download ${binary.name}: ${err.message}. Check your internet connection and restart the app.`);
+              bootstrapStatus = { active: false, failed: true, message: `Couldn't download ${binary.name}. Check your internet connection and reopen the app.` };
+              io.emit('bootstrap-status', bootstrapStatus);
+              showErrorDialog(`Universal Video Downloader couldn't download a required component (${binary.name}).\n\nCheck your internet connection and firewall, then open the app again — it will retry.`);
               return false;
           }
       }
+      bootstrapStatus = { active: false, message: 'Setup complete.' };
+      io.emit('bootstrap-status', bootstrapStatus);
       return true;
   }
 
@@ -830,6 +873,7 @@
     // Tell the client what we know as soon as it connects
     socket.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser, platform });
     socket.emit('app-update-status', lastAppUpdateStatus);
+    if (bootstrapStatus) socket.emit('bootstrap-status', bootstrapStatus);
 
     // Replay recent activity for clients that (re)connect mid-session, e.g.
     // after closing their browser to let cookie extraction work
@@ -923,6 +967,13 @@
       io.emit('ytdlp-status', { version: ytDlpVersion, cookiesFile: findCookiesFile(), defaultBrowser, platform });
     });
 
+    socket.on("quit-app", () => {
+      console.log("Quit requested by user.");
+      io.emit("app-quitting");
+      // Give the client a moment to show its goodbye message
+      setTimeout(() => process.exit(0), 400);
+    });
+
     socket.on("cancel-download", () => {
       console.log("Cancellation request received from:", socket.id);
       isCancelled = true;
@@ -967,22 +1018,11 @@
                   }
                   
                   if (isPkg) {
-                      console.log("\n========================================================");
-                      console.log("  Universal Video Downloader is running.");
-                      console.log("");
-                      console.log("  A separate app window is opening in your browser.");
-                      console.log("  If it doesn't, open this address yourself:");
-                      console.log(`     ${url}`);
-                      console.log("");
-                      console.log("  ⚠ Keep THIS window open while you use the app.");
-                      console.log("    Closing this window stops the downloader.");
-                      console.log("    (You can minimize it.)");
-                      console.log("========================================================\n");
-
-                      // Open browser after a short delay to ensure server is ready
+                      console.log(`Universal Video Downloader running at ${url}`);
+                      // Open the app window shortly after the server is ready
                       setTimeout(() => {
                           openBrowser(url);
-                      }, 1000);
+                      }, 800);
                   } else {
                       console.log("Open this URL in your browser to use the downloader.");
                       
@@ -1003,20 +1043,18 @@
       if (attempts >= maxAttempts) {
           console.error('❌ Could not find an available port. Please close other applications and try again.');
           if (isPkg) {
-              console.log('\nPress any key to exit...');
-              process.stdin.resume();
-              process.stdin.on('data', process.exit);
+              showErrorDialog('Universal Video Downloader could not find a free network port (it tries 3000-3009). Please close other apps that may be using these ports and start it again.');
+              setTimeout(() => process.exit(1), 500);
           }
       }
   }
-  
+
   // Start the server
   startServer().catch(err => {
       console.error('Failed to start server:', err);
       if (isPkg) {
-          console.log('\nPress any key to exit...');
-          process.stdin.resume();
-          process.stdin.on('data', process.exit);
+          showErrorDialog('Universal Video Downloader failed to start:\n\n' + (err && err.message ? err.message : String(err)) + '\n\nSee uvd-log.txt next to the app for details.');
+          setTimeout(() => process.exit(1), 500);
       }
   });
   
