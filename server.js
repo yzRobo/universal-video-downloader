@@ -186,7 +186,10 @@
       }
   }
 
-  // Find a cookies.txt file (downloads folder or next to the app)
+  // Find a VALID cookies.txt file (downloads folder or next to the app).
+  // Empty or non-Netscape files are ignored — passing one to yt-dlp makes
+  // every download fail with "does not look like a Netscape format cookies
+  // file".
   function findCookiesFile() {
       const candidates = [
           path.join(getDownloadsDir(), 'cookies.txt'),
@@ -194,8 +197,12 @@
       ];
       for (const candidate of candidates) {
           try {
-              fs.accessSync(candidate, fs.constants.F_OK);
-              return candidate;
+              const content = fs.readFileSync(candidate, 'utf8');
+              const looksValid = content.includes('# Netscape')
+                  || content.includes('# HTTP Cookie File')
+                  || content.includes('\t');
+              if (looksValid) return candidate;
+              console.log(`Ignoring ${candidate}: not a valid Netscape cookies file`);
           } catch (e) { /* not here, try next */ }
       }
       return null;
